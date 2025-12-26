@@ -1,5 +1,6 @@
 import { Audio } from "expo-av";
-import * as FileSystem from "expo-file-system";
+import { File, Paths } from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 const ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1";
 
@@ -103,15 +104,16 @@ export async function transcribeAudio(
   apiKey: string
 ): Promise<TranscriptionResult | null> {
   try {
-    const fileInfo = await FileSystem.getInfoAsync(audioUri);
-    if (!fileInfo.exists) {
+    // Use new File API to check existence
+    const file = new File(audioUri);
+    if (!file.exists) {
       console.error("Audio file does not exist:", audioUri);
       return null;
     }
 
     console.log("=== Transcribing audio ===");
     console.log("Audio URI:", audioUri);
-    console.log("File size:", (fileInfo as any).size);
+    console.log("File size:", file.size);
 
     // Determine file extension from URI
     const extension = audioUri.split(".").pop()?.toLowerCase() || "wav";

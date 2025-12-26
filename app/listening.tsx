@@ -15,7 +15,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../context/TranslationContext";
 import { Audio } from "expo-av";
-import * as FileSystem from "expo-file-system";
+import { File, Paths } from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import SpeakerBubble from "../components/SpeakerBubble";
 import TranscriptBubble from "../components/TranscriptBubble";
 import { transcribeAudio, TranscriptionResult } from "../api/elevenlabs";
@@ -347,11 +348,11 @@ export default function ListeningScreen() {
         return;
       }
 
-      // Check file info
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      console.log("File info:", JSON.stringify(fileInfo));
+      // Check file info using new File API
+      const file = new File(uri);
+      console.log("File exists:", file.exists);
       
-      if (!fileInfo.exists) {
+      if (!file.exists) {
         console.error("Recording file does not exist");
         setLastError("File not found");
         setIsProcessing(false);
@@ -362,7 +363,7 @@ export default function ListeningScreen() {
         return;
       }
 
-      const fileSize = (fileInfo as any).size || 0;
+      const fileSize = file.size || 0;
       console.log("File size:", fileSize);
       setDebugInfo(`Sending to API (${Math.round(fileSize/1024)}KB)...`);
 
@@ -371,7 +372,7 @@ export default function ListeningScreen() {
         console.log("File too small, likely no audio");
         setDebugInfo("No audio detected, listening...");
         try {
-          await FileSystem.deleteAsync(uri, { idempotent: true });
+          file.delete();
         } catch (e) {}
         setIsProcessing(false);
         processingRef.current = false;
@@ -388,7 +389,7 @@ export default function ListeningScreen() {
 
       // Clean up the audio file
       try {
-        await FileSystem.deleteAsync(uri, { idempotent: true });
+        file.delete();
       } catch (e) {
         console.log("Failed to delete file:", e);
       }
@@ -474,7 +475,10 @@ export default function ListeningScreen() {
         const uri = currentRecording.getURI();
         if (uri) {
           try {
-            await FileSystem.deleteAsync(uri, { idempotent: true });
+            const file = new File(uri);
+            if (file.exists) {
+              file.delete();
+            }
           } catch (e) {}
         }
       } catch (err) {
