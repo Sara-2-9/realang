@@ -109,51 +109,64 @@ export async function transcribeAudio(
       return null;
     }
 
-    console.log("Transcribing audio file:", audioUri);
-    console.log("File info:", JSON.stringify(fileInfo));
+    console.log("=== Transcribing audio ===");
+    console.log("Audio URI:", audioUri);
+    console.log("File size:", (fileInfo as any).size);
 
-    // Read file as base64
-    const fileBase64 = await FileSystem.readAsStringAsync(audioUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    // Determine file extension from URI
+    const extension = audioUri.split(".").pop()?.toLowerCase() || "wav";
+    const mimeType = extension === "m4a" ? "audio/m4a" : 
+                     extension === "wav" ? "audio/wav" : 
+                     extension === "mp3" ? "audio/mpeg" : "audio/wav";
 
-    console.log("File base64 length:", fileBase64.length);
+    console.log("File extension:", extension);
+    console.log("MIME type:", mimeType);
 
-    // For React Native, we need to use the proper FormData approach
-    // Create FormData with the file URI directly
+    // Create FormData for React Native
     const formData = new FormData();
     
-    // In React Native, we append the file with a special object format
+    // Append file with proper format for React Native
     formData.append("file", {
       uri: audioUri,
-      type: "audio/m4a",
-      name: "recording.m4a",
+      type: mimeType,
+      name: `recording.${extension}`,
     } as any);
     
     formData.append("model_id", "scribe_v1");
     formData.append("diarize", "true");
     formData.append("tag_audio_events", "false");
 
-    console.log("Sending request to ElevenLabs...");
+    console.log("Sending request to ElevenLabs Speech-to-Text API...");
 
     const response = await fetch(`${ELEVENLABS_API_URL}/speech-to-text`, {
       method: "POST",
       headers: {
         "xi-api-key": apiKey,
+        "Accept": "application/json",
       },
       body: formData,
     });
 
     console.log("Response status:", response.status);
+    console.log("Response status text:", response.statusText);
+
+    const responseText = await response.text();
+    console.log("Response body:", responseText.substring(0, 500));
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Transcription API error:", response.status, errorText);
+      console.error("Transcription API error:", response.status, responseText);
+      throw new Error(`API Error ${response.status}: ${responseText}`);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (e) {
+      console.error("Failed to parse response JSON:", e);
       return null;
     }
 
-    const data = await response.json();
-    console.log("Transcription result:", JSON.stringify(data));
+    console.log("Parsed transcription data:", JSON.stringify(data).substring(0, 500));
 
     return {
       text: data.text || "",
@@ -162,58 +175,9 @@ export async function transcribeAudio(
       words: data.words,
       utterances: data.utterances,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Transcription error:", error);
-    return null;
-  }
-}
-
-export async function transcribeAudioRealtime(
-  audioBase64: string,
-  apiKey: string,
-  sampleRate: number = 16000
-): Promise<TranscriptionResult | null> {
-  try {
-    // Create blob from base64
-    const byteCharacters = atob(audioBase64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
-    }
-    const byteArray = new Uint8Array(byteNumbers);
-    const blob = new Blob([byteArray], { type: "audio/wav" });
-
-    // Create FormData
-    const formData = new FormData();
-    formData.append("file", blob, "audio.wav");
-    formData.append("model_id", "scribe_v1");
-    formData.append("diarize", "true");
-
-    const response = await fetch(`${ELEVENLABS_API_URL}/speech-to-text`, {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Realtime transcription error:", errorText);
-      return null;
-    }
-
-    const data = await response.json();
-    return {
-      text: data.text || "",
-      language_code: data.language_code,
-      detected_language: getLanguageFromCode(data.language_code),
-      words: data.words,
-      utterances: data.utterances,
-    };
-  } catch (error) {
-    console.error("Realtime transcription error:", error);
-    return null;
+    throw error;
   }
 }
 
@@ -232,6 +196,7 @@ function getLanguageFromCode(code: string | undefined): string {
     jpn: "Japanese",
     kor: "Korean",
     zho: "Chinese",
+    cmn: "Chinese",
     ara: "Arabic",
     hin: "Hindi",
     tur: "Turkish",
@@ -262,9 +227,6 @@ export async function translateText(
   apiKey: string
 ): Promise<string | null> {
   try {
-    // ElevenLabs doesn't have a direct translation API
-    // We'll use text-to-speech with the target language for translation effect
-    // For actual translation, we return simulated translation
     return simulateTranslation(text, sourceLanguage, targetLanguage);
   } catch (error) {
     console.error("Translation error:", error);
@@ -273,8 +235,6 @@ export async function translateText(
 }
 
 function simulateTranslation(text: string, sourceLanguage: string, targetLanguage: string): string {
-  // For demo purposes - in production you'd use a translation API like Google Translate
-  // This provides basic translation simulation
   if (sourceLanguage === targetLanguage) {
     return text;
   }

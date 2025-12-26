@@ -53,7 +53,7 @@ const SPEAKER_COLORS = [
 
 const { width } = Dimensions.get("window");
 
-const RECORDING_DURATION_MS = 5000; // Record 5 seconds at a time
+const RECORDING_DURATION_MS = 6000; // Record 6 seconds at a time for better transcription
 
 export default function ListeningScreen() {
   const router = useRouter();
@@ -66,10 +66,12 @@ export default function ListeningScreen() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingCount, setRecordingCount] = useState(0);
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [lastError, setLastError] = useState<string>("");
   const flatListRef = useRef<FlatList>(null);
   const speakerMapRef = useRef<Map<string, Speaker>>(new Map());
   const isListeningRef = useRef(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
+  const processingRef = useRef(false);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const waveAnim1 = useRef(new Animated.Value(0)).current;
@@ -151,7 +153,6 @@ export default function ListeningScreen() {
   const getOrCreateSpeaker = (speakerId: string, detectedLanguage: string): Speaker => {
     const existingSpeaker = speakerMapRef.current.get(speakerId);
     if (existingSpeaker) {
-      // Update language if detected
       if (detectedLanguage && detectedLanguage !== "Unknown") {
         existingSpeaker.language = detectedLanguage;
       }
@@ -177,12 +178,11 @@ export default function ListeningScreen() {
     
     if (!result.text || result.text.trim() === "") {
       console.log("Empty transcription text, skipping");
-      setDebugInfo(prev => prev + "\nEmpty result");
       return;
     }
 
     const detectedLanguage = result.detected_language || "Unknown";
-    setDebugInfo(prev => prev + `\nDetected: ${detectedLanguage}`);
+    setDebugInfo(`Detected: ${detectedLanguage}\nText: ${result.text.substring(0, 50)}...`);
     
     // Process utterances if available (speaker diarization)
     if (result.utterances && result.utterances.length > 0) {
@@ -193,13 +193,11 @@ export default function ListeningScreen() {
         const speakerId = utterance.speaker_id || "speaker_0";
         const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
         
-        // Update speaker state
         speaker.isSpeaking = true;
         speaker.lastActive = new Date();
         
         setSpeakers(Array.from(speakerMapRef.current.values()));
         
-        // Create message
         const translatedText = detectedLanguage === userLanguage 
           ? utterance.text 
           : `[${userLanguage}] ${utterance.text}`;
@@ -217,14 +215,12 @@ export default function ListeningScreen() {
 
         setMessages((prev) => [...prev, newMessage]);
 
-        // Reset speaking indicator after a delay
         setTimeout(() => {
           speaker.isSpeaking = false;
           setSpeakers(Array.from(speakerMapRef.current.values()));
         }, 1500);
       });
     } else {
-      // No diarization - treat as single speaker
       console.log("No utterances, using single speaker");
       const speakerId = "speaker_0";
       const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
@@ -258,44 +254,48 @@ export default function ListeningScreen() {
     }
   };
 
-  const startRecordingSegment = async () => {
-    if (!isListeningRef.current) {
-      console.log("Not listening, skipping recording segment");
+  const recordAndTranscribe = async () => {
+    if (!isListeningRef.current || processingRef.current) {
       return;
     }
 
-    try {
-      console.log("Starting recording segment...");
-      setDebugInfo(prev => prev + "\nStarting recording...");
+    processingRef.current = true;
+    let localRecording: Audio.Recording | null = null;
 
+    try {
+      console.log("=== Starting new recording segment ===");
+      setDebugInfo("Starting recording...");
+
+      // Configure audio session for recording
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
       });
 
+      // Create recording with proper settings
       const recordingOptions: Audio.RecordingOptions = {
         android: {
-          extension: ".m4a",
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 44100,
+          extension: ".wav",
+          outputFormat: Audio.AndroidOutputFormat.DEFAULT,
+          audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
+          sampleRate: 16000,
           numberOfChannels: 1,
-          bitRate: 128000,
+          bitRate: 256000,
         },
         ios: {
-          extension: ".m4a",
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 44100,
+          extension: ".wav",
+          audioQuality: Audio.IOSAudioQuality.MAX,
+          sampleRate: 16000,
           numberOfChannels: 1,
-          bitRate: 128000,
+          bitRate: 256000,
           linearPCMBitDepth: 16,
           linearPCMIsBigEndian: false,
           linearPCMIsFloat: false,
         },
         web: {
           mimeType: "audio/webm",
-          bitsPerSecond: 128000,
+          bitsPerSecond: 256000,
         },
       };
 
@@ -303,95 +303,130 @@ export default function ListeningScreen() {
         recordingOptions
       );
       
+      localRecording = newRecording;
       recordingRef.current = newRecording;
       setRecording(newRecording);
       setRecordingCount((prev) => prev + 1);
       
       console.log("Recording started successfully");
-      setDebugInfo(prev => prev + "\nRecording...");
+      setDebugInfo("Recording... Speak now!");
 
-      // Stop recording after duration and process
-      setTimeout(async () => {
-        if (!isListeningRef.current) {
-          console.log("Stopped listening during recording");
-          return;
-        }
-        
+      // Wait for recording duration
+      await new Promise(resolve => setTimeout(resolve, RECORDING_DURATION_MS));
+
+      // Check if still listening
+      if (!isListeningRef.current) {
+        console.log("Stopped listening, aborting");
         try {
-          console.log("Stopping recording...");
-          setDebugInfo(prev => prev + "\nStopping...");
-          
-          const currentRecording = recordingRef.current;
-          if (!currentRecording) {
-            console.log("No recording to stop");
-            if (isListeningRef.current) startRecordingSegment();
-            return;
-          }
+          await localRecording.stopAndUnloadAsync();
+        } catch (e) {}
+        processingRef.current = false;
+        return;
+      }
 
-          const status = await currentRecording.getStatusAsync();
-          console.log("Recording status:", JSON.stringify(status));
-          
-          await currentRecording.stopAndUnloadAsync();
-          const uri = currentRecording.getURI();
-          recordingRef.current = null;
-          setRecording(null);
-          
-          console.log("Recording URI:", uri);
-          setDebugInfo(prev => prev + `\nURI: ${uri ? "OK" : "NULL"}`);
-          
-          if (uri && isListeningRef.current) {
-            setIsProcessing(true);
-            setDebugInfo(prev => prev + "\nTranscribing...");
-            
-            // Check file exists
-            const fileInfo = await FileSystem.getInfoAsync(uri);
-            console.log("File info:", JSON.stringify(fileInfo));
-            setDebugInfo(prev => prev + `\nFile size: ${(fileInfo as any).size || "unknown"}`);
-            
-            // Transcribe the audio
-            const result = await transcribeAudio(uri, apiKey);
-            
-            console.log("Transcription result:", result);
-            setDebugInfo(prev => prev + `\nResult: ${result?.text || "none"}`);
-            
-            if (result && result.text) {
-              processTranscriptionResult(result);
-            } else {
-              setDebugInfo(prev => prev + "\nNo speech detected");
-            }
-            
-            // Clean up the audio file
-            try {
-              await FileSystem.deleteAsync(uri, { idempotent: true });
-            } catch (e) {
-              // Ignore cleanup errors
-            }
-            
-            setIsProcessing(false);
-          }
-          
-          // Start next recording segment
-          if (isListeningRef.current) {
-            startRecordingSegment();
-          }
-        } catch (err) {
-          console.error("Error processing recording:", err);
-          setDebugInfo(prev => prev + `\nError: ${err}`);
-          setIsProcessing(false);
-          
-          // Try to start next segment anyway
-          if (isListeningRef.current) {
-            setTimeout(() => startRecordingSegment(), 1000);
-          }
-        }
-      }, RECORDING_DURATION_MS);
-    } catch (err) {
-      console.error("Failed to start recording segment:", err);
-      setDebugInfo(prev => prev + `\nStart error: ${err}`);
+      console.log("Stopping recording...");
+      setDebugInfo("Processing audio...");
+      setIsProcessing(true);
+
+      // Stop recording and get URI
+      await localRecording.stopAndUnloadAsync();
+      const uri = localRecording.getURI();
+      recordingRef.current = null;
+      setRecording(null);
       
-      // Retry after a delay
+      console.log("Recording URI:", uri);
+
+      if (!uri) {
+        console.error("No recording URI");
+        setLastError("No recording URI");
+        setIsProcessing(false);
+        processingRef.current = false;
+        if (isListeningRef.current) {
+          setTimeout(() => recordAndTranscribe(), 500);
+        }
+        return;
+      }
+
+      // Check file info
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      console.log("File info:", JSON.stringify(fileInfo));
+      
+      if (!fileInfo.exists) {
+        console.error("Recording file does not exist");
+        setLastError("File not found");
+        setIsProcessing(false);
+        processingRef.current = false;
+        if (isListeningRef.current) {
+          setTimeout(() => recordAndTranscribe(), 500);
+        }
+        return;
+      }
+
+      const fileSize = (fileInfo as any).size || 0;
+      console.log("File size:", fileSize);
+      setDebugInfo(`Sending to API (${Math.round(fileSize/1024)}KB)...`);
+
+      // Minimum file size check (very small files likely have no audio)
+      if (fileSize < 5000) {
+        console.log("File too small, likely no audio");
+        setDebugInfo("No audio detected, listening...");
+        try {
+          await FileSystem.deleteAsync(uri, { idempotent: true });
+        } catch (e) {}
+        setIsProcessing(false);
+        processingRef.current = false;
+        if (isListeningRef.current) {
+          setTimeout(() => recordAndTranscribe(), 300);
+        }
+        return;
+      }
+
+      // Transcribe the audio
+      const result = await transcribeAudio(uri, apiKey);
+      
+      console.log("Transcription result:", JSON.stringify(result));
+
+      // Clean up the audio file
+      try {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+      } catch (e) {
+        console.log("Failed to delete file:", e);
+      }
+
+      if (result && result.text && result.text.trim()) {
+        setLastError("");
+        processTranscriptionResult(result);
+      } else {
+        console.log("No speech detected or empty result");
+        setDebugInfo("No speech detected, listening...");
+      }
+
+      setIsProcessing(false);
+      processingRef.current = false;
+
+      // Continue recording if still listening
       if (isListeningRef.current) {
-        setTimeout(() => startRecordingSegment(), 1000);
+        setTimeout(() => recordAndTranscribe(), 300);
+      }
+    } catch (err: any) {
+      console.error("Recording/transcription error:", err);
+      setLastError(err?.message || String(err));
+      setDebugInfo(`Error: ${err?.message || err}`);
+      setIsProcessing(false);
+      processingRef.current = false;
+
+      // Try to clean up
+      if (localRecording) {
+        try {
+          await localRecording.stopAndUnloadAsync();
+        } catch (e) {}
+      }
+      recordingRef.current = null;
+      setRecording(null);
+
+      // Retry if still listening
+      if (isListeningRef.current) {
+        setTimeout(() => recordAndTranscribe(), 1000);
       }
     }
   };
@@ -410,22 +445,24 @@ export default function ListeningScreen() {
     if (!hasPermission) return;
 
     console.log("Starting listening...");
-    setDebugInfo("Starting...");
+    setDebugInfo("Initializing...");
+    setLastError("");
     
     setIsListening(true);
     isListeningRef.current = true;
+    processingRef.current = false;
     speakerMapRef.current.clear();
     setSpeakers([]);
     setMessages([]);
     setRecordingCount(0);
 
-    // Start first recording segment
-    startRecordingSegment();
+    // Start recording loop
+    recordAndTranscribe();
   };
 
   const stopListening = async () => {
     console.log("Stopping listening...");
-    setDebugInfo(prev => prev + "\nStopping...");
+    setDebugInfo("Stopped");
     
     setIsListening(false);
     isListeningRef.current = false;
@@ -438,9 +475,7 @@ export default function ListeningScreen() {
         if (uri) {
           try {
             await FileSystem.deleteAsync(uri, { idempotent: true });
-          } catch (e) {
-            // Ignore cleanup errors
-          }
+          } catch (e) {}
         }
       } catch (err) {
         console.error("Failed to stop recording:", err);
@@ -450,6 +485,8 @@ export default function ListeningScreen() {
     }
 
     setSpeakers((prev) => prev.map((s) => ({ ...s, isSpeaking: false })));
+    setIsProcessing(false);
+    processingRef.current = false;
   };
 
   const handleBack = () => {
@@ -512,11 +549,10 @@ export default function ListeningScreen() {
       </View>
 
       {/* Debug info */}
-      {debugInfo && (
-        <View style={styles.debugContainer}>
-          <Text style={styles.debugText} numberOfLines={4}>{debugInfo}</Text>
-        </View>
-      )}
+      <View style={styles.debugContainer}>
+        <Text style={styles.debugText} numberOfLines={3}>{debugInfo}</Text>
+        {lastError ? <Text style={styles.errorText}>{lastError}</Text> : null}
+      </View>
 
       {/* Speakers visualization */}
       <View style={styles.speakersContainer}>
@@ -646,19 +682,25 @@ const styles = StyleSheet.create({
   },
   debugContainer: {
     backgroundColor: "#FFF3E0",
-    padding: 8,
+    padding: 10,
     marginHorizontal: 16,
     marginTop: 8,
     borderRadius: 8,
   },
   debugText: {
-    fontSize: 10,
-    color: "#8B7355",
+    fontSize: 12,
+    color: "#5C4D3C",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  errorText: {
+    fontSize: 11,
+    color: "#D32F2F",
+    marginTop: 4,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   speakersContainer: {
     padding: 16,
-    minHeight: 120,
+    minHeight: 100,
     borderBottomWidth: 1,
     borderBottomColor: "#E8DFD0",
   },
