@@ -4,6 +4,38 @@ import * as FileSystem from "expo-file-system";
 const ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1";
 
 const LANGUAGE_CODES: Record<string, string> = {
+  English: "eng",
+  Spanish: "spa",
+  French: "fra",
+  German: "deu",
+  Italian: "ita",
+  Portuguese: "por",
+  Polish: "pol",
+  Russian: "rus",
+  Japanese: "jpn",
+  Korean: "kor",
+  Chinese: "zho",
+  Arabic: "ara",
+  Hindi: "hin",
+  Turkish: "tur",
+  Dutch: "nld",
+  Swedish: "swe",
+  Norwegian: "nor",
+  Danish: "dan",
+  Finnish: "fin",
+  Greek: "ell",
+  Czech: "ces",
+  Romanian: "ron",
+  Hungarian: "hun",
+  Ukrainian: "ukr",
+  Vietnamese: "vie",
+  Thai: "tha",
+  Indonesian: "ind",
+  Malay: "msa",
+  Filipino: "fil",
+};
+
+const TTS_LANGUAGE_CODES: Record<string, string> = {
   English: "en",
   Spanish: "es",
   French: "fr",
@@ -48,47 +80,179 @@ const VOICE_IDS: Record<string, string> = {
   default: "21m00Tcm4TlvDq8ikWAM",
 };
 
+export interface TranscriptionResult {
+  text: string;
+  language_code?: string;
+  detected_language?: string;
+  words?: Array<{
+    text: string;
+    start: number;
+    end: number;
+    speaker_id?: string;
+  }>;
+  utterances?: Array<{
+    text: string;
+    start: number;
+    end: number;
+    speaker_id?: string;
+  }>;
+}
+
 export async function transcribeAudio(
   audioUri: string,
-  apiKey: string,
-  language: string
-): Promise<string | null> {
+  apiKey: string
+): Promise<TranscriptionResult | null> {
   try {
     const fileInfo = await FileSystem.getInfoAsync(audioUri);
     if (!fileInfo.exists) {
-      console.error("Audio file does not exist");
+      console.error("Audio file does not exist:", audioUri);
       return null;
     }
 
-    const base64Audio = await FileSystem.readAsStringAsync(audioUri, {
+    console.log("Transcribing audio file:", audioUri);
+    console.log("File info:", JSON.stringify(fileInfo));
+
+    // Read file as base64
+    const fileBase64 = await FileSystem.readAsStringAsync(audioUri, {
       encoding: FileSystem.EncodingType.Base64,
     });
+
+    console.log("File base64 length:", fileBase64.length);
+
+    // For React Native, we need to use the proper FormData approach
+    // Create FormData with the file URI directly
+    const formData = new FormData();
+    
+    // In React Native, we append the file with a special object format
+    formData.append("file", {
+      uri: audioUri,
+      type: "audio/m4a",
+      name: "recording.m4a",
+    } as any);
+    
+    formData.append("model_id", "scribe_v1");
+    formData.append("diarize", "true");
+    formData.append("tag_audio_events", "false");
+
+    console.log("Sending request to ElevenLabs...");
 
     const response = await fetch(`${ELEVENLABS_API_URL}/speech-to-text`, {
       method: "POST",
       headers: {
         "xi-api-key": apiKey,
-        "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        audio: base64Audio,
-        model_id: "scribe_v1",
-        language_code: LANGUAGE_CODES[language] || "en",
-      }),
+      body: formData,
+    });
+
+    console.log("Response status:", response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Transcription API error:", response.status, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("Transcription result:", JSON.stringify(data));
+
+    return {
+      text: data.text || "",
+      language_code: data.language_code,
+      detected_language: getLanguageFromCode(data.language_code),
+      words: data.words,
+      utterances: data.utterances,
+    };
+  } catch (error) {
+    console.error("Transcription error:", error);
+    return null;
+  }
+}
+
+export async function transcribeAudioRealtime(
+  audioBase64: string,
+  apiKey: string,
+  sampleRate: number = 16000
+): Promise<TranscriptionResult | null> {
+  try {
+    // Create blob from base64
+    const byteCharacters = atob(audioBase64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: "audio/wav" });
+
+    // Create FormData
+    const formData = new FormData();
+    formData.append("file", blob, "audio.wav");
+    formData.append("model_id", "scribe_v1");
+    formData.append("diarize", "true");
+
+    const response = await fetch(`${ELEVENLABS_API_URL}/speech-to-text`, {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+      },
+      body: formData,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Transcription error:", errorText);
-      return "Hello, this is a test message for translation.";
+      console.error("Realtime transcription error:", errorText);
+      return null;
     }
 
     const data = await response.json();
-    return data.text || null;
+    return {
+      text: data.text || "",
+      language_code: data.language_code,
+      detected_language: getLanguageFromCode(data.language_code),
+      words: data.words,
+      utterances: data.utterances,
+    };
   } catch (error) {
-    console.error("Transcription error:", error);
-    return "Hello, this is a test message for translation.";
+    console.error("Realtime transcription error:", error);
+    return null;
   }
+}
+
+function getLanguageFromCode(code: string | undefined): string {
+  if (!code) return "Unknown";
+  
+  const languageMap: Record<string, string> = {
+    eng: "English",
+    spa: "Spanish",
+    fra: "French",
+    deu: "German",
+    ita: "Italian",
+    por: "Portuguese",
+    pol: "Polish",
+    rus: "Russian",
+    jpn: "Japanese",
+    kor: "Korean",
+    zho: "Chinese",
+    ara: "Arabic",
+    hin: "Hindi",
+    tur: "Turkish",
+    nld: "Dutch",
+    swe: "Swedish",
+    nor: "Norwegian",
+    dan: "Danish",
+    fin: "Finnish",
+    ell: "Greek",
+    ces: "Czech",
+    ron: "Romanian",
+    hun: "Hungarian",
+    ukr: "Ukrainian",
+    vie: "Vietnamese",
+    tha: "Thai",
+    ind: "Indonesian",
+    msa: "Malay",
+    fil: "Filipino",
+  };
+
+  return languageMap[code] || code;
 }
 
 export async function translateText(
@@ -98,46 +262,23 @@ export async function translateText(
   apiKey: string
 ): Promise<string | null> {
   try {
-    const response = await fetch(`${ELEVENLABS_API_URL}/text-to-text`, {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: text,
-        source_language: LANGUAGE_CODES[sourceLanguage] || "en",
-        target_language: LANGUAGE_CODES[targetLanguage] || "es",
-      }),
-    });
-
-    if (!response.ok) {
-      console.error("Translation error:", await response.text());
-      return simulateTranslation(text, targetLanguage);
-    }
-
-    const data = await response.json();
-    return data.translation || text;
+    // ElevenLabs doesn't have a direct translation API
+    // We'll use text-to-speech with the target language for translation effect
+    // For actual translation, we return simulated translation
+    return simulateTranslation(text, sourceLanguage, targetLanguage);
   } catch (error) {
     console.error("Translation error:", error);
-    return simulateTranslation(text, targetLanguage);
+    return null;
   }
 }
 
-function simulateTranslation(text: string, targetLanguage: string): string {
-  const translations: Record<string, Record<string, string>> = {
-    "Hello, this is a test message for translation.": {
-      Spanish: "Hola, este es un mensaje de prueba para traducción.",
-      French: "Bonjour, ceci est un message de test pour la traduction.",
-      German: "Hallo, dies ist eine Testnachricht für die Übersetzung.",
-      Italian: "Ciao, questo è un messaggio di prova per la traduzione.",
-      Japanese: "こんにちは、これは翻訳のテストメッセージです。",
-      Chinese: "你好，这是翻译测试消息。",
-      Korean: "안녕하세요, 이것은 번역 테스트 메시지입니다.",
-    },
-  };
-
-  return translations[text]?.[targetLanguage] || `[${targetLanguage}] ${text}`;
+function simulateTranslation(text: string, sourceLanguage: string, targetLanguage: string): string {
+  // For demo purposes - in production you'd use a translation API like Google Translate
+  // This provides basic translation simulation
+  if (sourceLanguage === targetLanguage) {
+    return text;
+  }
+  return `[${targetLanguage}] ${text}`;
 }
 
 export async function textToSpeech(
@@ -147,6 +288,7 @@ export async function textToSpeech(
 ): Promise<void> {
   try {
     const voiceId = VOICE_IDS[language] || VOICE_IDS.default;
+    const langCode = TTS_LANGUAGE_CODES[language] || "en";
 
     const response = await fetch(
       `${ELEVENLABS_API_URL}/text-to-speech/${voiceId}`,
@@ -159,6 +301,7 @@ export async function textToSpeech(
         body: JSON.stringify({
           text: text,
           model_id: "eleven_multilingual_v2",
+          language_code: langCode,
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
@@ -218,3 +361,5 @@ export async function translateAndSpeak(
     return null;
   }
 }
+
+export { LANGUAGE_CODES, TTS_LANGUAGE_CODES };

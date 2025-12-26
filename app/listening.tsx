@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   StyleSheet,
   Text,
@@ -10,12 +10,15 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../context/TranslationContext";
 import { Audio } from "expo-av";
+import * as FileSystem from "expo-file-system";
 import SpeakerBubble from "../components/SpeakerBubble";
 import TranscriptBubble from "../components/TranscriptBubble";
+import { transcribeAudio, TranscriptionResult } from "../api/elevenlabs";
 
 interface Speaker {
   id: string;
@@ -44,24 +47,38 @@ const SPEAKER_COLORS = [
   "#C4789F",
   "#8B7355",
   "#6B8E6B",
+  "#B5738B",
+  "#6B9B9B",
 ];
 
 const { width } = Dimensions.get("window");
+
+const RECORDING_DURATION_MS = 5000; // Record 5 seconds at a time
 
 export default function ListeningScreen() {
   const router = useRouter();
   const { userLanguage, apiKey } = useTranslation();
 
   const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recordingCount, setRecordingCount] = useState(0);
+  const [debugInfo, setDebugInfo] = useState<string>("");
   const flatListRef = useRef<FlatList>(null);
+  const speakerMapRef = useRef<Map<string, Speaker>>(new Map());
+  const isListeningRef = useRef(false);
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const waveAnim1 = useRef(new Animated.Value(0)).current;
   const waveAnim2 = useRef(new Animated.Value(0)).current;
   const waveAnim3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
 
   useEffect(() => {
     if (isListening) {
@@ -117,136 +134,322 @@ export default function ListeningScreen() {
   };
 
   const requestPermissions = async () => {
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission required", "Please grant microphone access to use voice detection.");
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      console.log("Audio permission status:", status);
+      if (status !== "granted") {
+        Alert.alert("Permission required", "Please grant microphone access to use voice detection.");
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error("Permission error:", error);
       return false;
     }
-    return true;
   };
 
-  const simulateDetectedSpeakers = () => {
-    // Simulate detecting speakers in the environment
-    const mockSpeakers: Speaker[] = [
-      {
-        id: "speaker-1",
-        name: "Speaker 1",
-        language: "Spanish",
-        color: SPEAKER_COLORS[0],
-        isSpeaking: false,
-        lastActive: new Date(),
-      },
-      {
-        id: "speaker-2",
-        name: "Speaker 2",
-        language: "French",
-        color: SPEAKER_COLORS[1],
-        isSpeaking: false,
-        lastActive: new Date(),
-      },
-    ];
-    setSpeakers(mockSpeakers);
+  const getOrCreateSpeaker = (speakerId: string, detectedLanguage: string): Speaker => {
+    const existingSpeaker = speakerMapRef.current.get(speakerId);
+    if (existingSpeaker) {
+      // Update language if detected
+      if (detectedLanguage && detectedLanguage !== "Unknown") {
+        existingSpeaker.language = detectedLanguage;
+      }
+      return existingSpeaker;
+    }
 
-    // Simulate speech detection
-    const interval = setInterval(() => {
-      const randomSpeakerIndex = Math.floor(Math.random() * mockSpeakers.length);
-      const speaker = mockSpeakers[randomSpeakerIndex];
+    const speakerIndex = speakerMapRef.current.size;
+    const newSpeaker: Speaker = {
+      id: speakerId,
+      name: `Speaker ${speakerIndex + 1}`,
+      language: detectedLanguage || "Unknown",
+      color: SPEAKER_COLORS[speakerIndex % SPEAKER_COLORS.length],
+      isSpeaking: false,
+      lastActive: new Date(),
+    };
 
-      setSpeakers((prev) =>
-        prev.map((s, i) => ({
-          ...s,
-          isSpeaking: i === randomSpeakerIndex,
-        }))
-      );
+    speakerMapRef.current.set(speakerId, newSpeaker);
+    return newSpeaker;
+  };
 
-      // Simulate a new message
-      const mockPhrases: Record<string, { original: string; translated: string }[]> = {
-        Spanish: [
-          { original: "Hola, ¿cómo estás?", translated: "Hello, how are you?" },
-          { original: "El clima está muy bueno hoy", translated: "The weather is very nice today" },
-          { original: "¿Quieres tomar un café?", translated: "Do you want to have a coffee?" },
-        ],
-        French: [
-          { original: "Bonjour, comment ça va?", translated: "Hello, how are you?" },
-          { original: "Il fait beau aujourd'hui", translated: "The weather is nice today" },
-          { original: "Je voudrais un croissant", translated: "I would like a croissant" },
-        ],
-      };
+  const processTranscriptionResult = (result: TranscriptionResult) => {
+    console.log("Processing transcription result:", JSON.stringify(result));
+    
+    if (!result.text || result.text.trim() === "") {
+      console.log("Empty transcription text, skipping");
+      setDebugInfo(prev => prev + "\nEmpty result");
+      return;
+    }
 
-      const phrases = mockPhrases[speaker.language] || mockPhrases.Spanish;
-      const randomPhrase = phrases[Math.floor(Math.random() * phrases.length)];
+    const detectedLanguage = result.detected_language || "Unknown";
+    setDebugInfo(prev => prev + `\nDetected: ${detectedLanguage}`);
+    
+    // Process utterances if available (speaker diarization)
+    if (result.utterances && result.utterances.length > 0) {
+      console.log("Processing utterances:", result.utterances.length);
+      result.utterances.forEach((utterance) => {
+        if (!utterance.text || utterance.text.trim() === "") return;
+        
+        const speakerId = utterance.speaker_id || "speaker_0";
+        const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
+        
+        // Update speaker state
+        speaker.isSpeaking = true;
+        speaker.lastActive = new Date();
+        
+        setSpeakers(Array.from(speakerMapRef.current.values()));
+        
+        // Create message
+        const translatedText = detectedLanguage === userLanguage 
+          ? utterance.text 
+          : `[${userLanguage}] ${utterance.text}`;
+        
+        const newMessage: Message = {
+          id: Date.now().toString() + speakerId + Math.random(),
+          participantId: speaker.id,
+          participantName: speaker.name,
+          originalText: utterance.text,
+          translatedText: translatedText,
+          originalLanguage: detectedLanguage,
+          timestamp: new Date(),
+          speakerColor: speaker.color,
+        };
 
+        setMessages((prev) => [...prev, newMessage]);
+
+        // Reset speaking indicator after a delay
+        setTimeout(() => {
+          speaker.isSpeaking = false;
+          setSpeakers(Array.from(speakerMapRef.current.values()));
+        }, 1500);
+      });
+    } else {
+      // No diarization - treat as single speaker
+      console.log("No utterances, using single speaker");
+      const speakerId = "speaker_0";
+      const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
+      
+      speaker.isSpeaking = true;
+      speaker.lastActive = new Date();
+      
+      setSpeakers(Array.from(speakerMapRef.current.values()));
+      
+      const translatedText = detectedLanguage === userLanguage 
+        ? result.text 
+        : `[${userLanguage}] ${result.text}`;
+      
       const newMessage: Message = {
-        id: Date.now().toString(),
+        id: Date.now().toString() + Math.random(),
         participantId: speaker.id,
         participantName: speaker.name,
-        originalText: randomPhrase.original,
-        translatedText: randomPhrase.translated,
-        originalLanguage: speaker.language,
+        originalText: result.text,
+        translatedText: translatedText,
+        originalLanguage: detectedLanguage,
         timestamp: new Date(),
         speakerColor: speaker.color,
       };
 
       setMessages((prev) => [...prev, newMessage]);
 
-      // Stop speaking indicator after a delay
       setTimeout(() => {
-        setSpeakers((prev) =>
-          prev.map((s) => ({
-            ...s,
-            isSpeaking: false,
-          }))
-        );
-      }, 2000);
-    }, 5000);
+        speaker.isSpeaking = false;
+        setSpeakers(Array.from(speakerMapRef.current.values()));
+      }, 1500);
+    }
+  };
 
-    return interval;
+  const startRecordingSegment = async () => {
+    if (!isListeningRef.current) {
+      console.log("Not listening, skipping recording segment");
+      return;
+    }
+
+    try {
+      console.log("Starting recording segment...");
+      setDebugInfo(prev => prev + "\nStarting recording...");
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+      });
+
+      const recordingOptions: Audio.RecordingOptions = {
+        android: {
+          extension: ".m4a",
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: ".m4a",
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: "audio/webm",
+          bitsPerSecond: 128000,
+        },
+      };
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        recordingOptions
+      );
+      
+      recordingRef.current = newRecording;
+      setRecording(newRecording);
+      setRecordingCount((prev) => prev + 1);
+      
+      console.log("Recording started successfully");
+      setDebugInfo(prev => prev + "\nRecording...");
+
+      // Stop recording after duration and process
+      setTimeout(async () => {
+        if (!isListeningRef.current) {
+          console.log("Stopped listening during recording");
+          return;
+        }
+        
+        try {
+          console.log("Stopping recording...");
+          setDebugInfo(prev => prev + "\nStopping...");
+          
+          const currentRecording = recordingRef.current;
+          if (!currentRecording) {
+            console.log("No recording to stop");
+            if (isListeningRef.current) startRecordingSegment();
+            return;
+          }
+
+          const status = await currentRecording.getStatusAsync();
+          console.log("Recording status:", JSON.stringify(status));
+          
+          await currentRecording.stopAndUnloadAsync();
+          const uri = currentRecording.getURI();
+          recordingRef.current = null;
+          setRecording(null);
+          
+          console.log("Recording URI:", uri);
+          setDebugInfo(prev => prev + `\nURI: ${uri ? "OK" : "NULL"}`);
+          
+          if (uri && isListeningRef.current) {
+            setIsProcessing(true);
+            setDebugInfo(prev => prev + "\nTranscribing...");
+            
+            // Check file exists
+            const fileInfo = await FileSystem.getInfoAsync(uri);
+            console.log("File info:", JSON.stringify(fileInfo));
+            setDebugInfo(prev => prev + `\nFile size: ${(fileInfo as any).size || "unknown"}`);
+            
+            // Transcribe the audio
+            const result = await transcribeAudio(uri, apiKey);
+            
+            console.log("Transcription result:", result);
+            setDebugInfo(prev => prev + `\nResult: ${result?.text || "none"}`);
+            
+            if (result && result.text) {
+              processTranscriptionResult(result);
+            } else {
+              setDebugInfo(prev => prev + "\nNo speech detected");
+            }
+            
+            // Clean up the audio file
+            try {
+              await FileSystem.deleteAsync(uri, { idempotent: true });
+            } catch (e) {
+              // Ignore cleanup errors
+            }
+            
+            setIsProcessing(false);
+          }
+          
+          // Start next recording segment
+          if (isListeningRef.current) {
+            startRecordingSegment();
+          }
+        } catch (err) {
+          console.error("Error processing recording:", err);
+          setDebugInfo(prev => prev + `\nError: ${err}`);
+          setIsProcessing(false);
+          
+          // Try to start next segment anyway
+          if (isListeningRef.current) {
+            setTimeout(() => startRecordingSegment(), 1000);
+          }
+        }
+      }, RECORDING_DURATION_MS);
+    } catch (err) {
+      console.error("Failed to start recording segment:", err);
+      setDebugInfo(prev => prev + `\nStart error: ${err}`);
+      
+      // Retry after a delay
+      if (isListeningRef.current) {
+        setTimeout(() => startRecordingSegment(), 1000);
+      }
+    }
   };
 
   const startListening = async () => {
     if (!apiKey) {
-      Alert.alert("API Key Required", "Please set your ElevenLabs API key in Settings.");
+      Alert.alert(
+        "API Key Required",
+        "Please set your ElevenLabs API key in Settings to enable real voice recognition.",
+        [{ text: "OK" }]
+      );
       return;
     }
 
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
 
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
+    console.log("Starting listening...");
+    setDebugInfo("Starting...");
+    
+    setIsListening(true);
+    isListeningRef.current = true;
+    speakerMapRef.current.clear();
+    setSpeakers([]);
+    setMessages([]);
+    setRecordingCount(0);
 
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      setRecording(newRecording);
-      setIsListening(true);
-
-      // Start simulating speaker detection
-      const intervalId = simulateDetectedSpeakers();
-      (newRecording as any).intervalId = intervalId;
-    } catch (err) {
-      console.error("Failed to start listening", err);
-      Alert.alert("Error", "Failed to start listening.");
-    }
+    // Start first recording segment
+    startRecordingSegment();
   };
 
   const stopListening = async () => {
-    if (!recording) return;
+    console.log("Stopping listening...");
+    setDebugInfo(prev => prev + "\nStopping...");
+    
+    setIsListening(false);
+    isListeningRef.current = false;
 
-    try {
-      if ((recording as any).intervalId) {
-        clearInterval((recording as any).intervalId);
+    const currentRecording = recordingRef.current;
+    if (currentRecording) {
+      try {
+        await currentRecording.stopAndUnloadAsync();
+        const uri = currentRecording.getURI();
+        if (uri) {
+          try {
+            await FileSystem.deleteAsync(uri, { idempotent: true });
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
+      } catch (err) {
+        console.error("Failed to stop recording:", err);
       }
-      await recording.stopAndUnloadAsync();
+      recordingRef.current = null;
       setRecording(null);
-      setIsListening(false);
-      setSpeakers((prev) => prev.map((s) => ({ ...s, isSpeaking: false })));
-    } catch (err) {
-      console.error("Failed to stop listening", err);
     }
+
+    setSpeakers((prev) => prev.map((s) => ({ ...s, isSpeaking: false })));
   };
 
   const handleBack = () => {
@@ -296,13 +499,24 @@ export default function ListeningScreen() {
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Live Translation</Text>
           <Text style={styles.headerSubtitle}>
-            {isListening ? `${speakers.length} speakers detected` : "Tap to start"}
+            {isListening 
+              ? isProcessing 
+                ? "Processing..." 
+                : `Recording #${recordingCount} - ${speakers.length} speaker${speakers.length !== 1 ? "s" : ""}` 
+              : "Tap to start"}
           </Text>
         </View>
         <View style={styles.languageBadge}>
           <Text style={styles.languageBadgeText}>{userLanguage}</Text>
         </View>
       </View>
+
+      {/* Debug info */}
+      {debugInfo && (
+        <View style={styles.debugContainer}>
+          <Text style={styles.debugText} numberOfLines={4}>{debugInfo}</Text>
+        </View>
+      )}
 
       {/* Speakers visualization */}
       <View style={styles.speakersContainer}>
@@ -315,7 +529,7 @@ export default function ListeningScreen() {
         ) : (
           <View style={styles.noSpeakersContainer}>
             <Text style={styles.noSpeakersText}>
-              {isListening ? "Detecting speakers..." : "No speakers detected"}
+              {isListening ? "Listening for speakers..." : "No speakers detected"}
             </Text>
           </View>
         )}
@@ -329,9 +543,14 @@ export default function ListeningScreen() {
             <Ionicons name="chatbubbles-outline" size={48} color="#B5A898" />
             <Text style={styles.emptyStateText}>
               {isListening
-                ? "Waiting for speech..."
+                ? "Listening... Speak to see transcription"
                 : "Start listening to capture conversations"}
             </Text>
+            {isListening && (
+              <Text style={styles.emptyStateHint}>
+                Using ElevenLabs Scribe for transcription
+              </Text>
+            )}
           </View>
         ) : (
           <FlatList
@@ -425,9 +644,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "bold",
   },
+  debugContainer: {
+    backgroundColor: "#FFF3E0",
+    padding: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 8,
+  },
+  debugText: {
+    fontSize: 10,
+    color: "#8B7355",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
   speakersContainer: {
     padding: 16,
-    minHeight: 140,
+    minHeight: 120,
     borderBottomWidth: 1,
     borderBottomColor: "#E8DFD0",
   },
@@ -467,6 +698,12 @@ const styles = StyleSheet.create({
     color: "#A69783",
     fontSize: 16,
     textAlign: "center",
+  },
+  emptyStateHint: {
+    color: "#B5A898",
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 8,
   },
   messagesList: {
     gap: 12,
