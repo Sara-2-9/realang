@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../../context/TranslationContext";
 
 export default function SettingsScreen() {
-  const { apiKey, setApiKey, userLanguage } = useTranslation();
+  const { apiKey, setApiKey, userLanguage, targetLanguage } = useTranslation();
   const [tempApiKey, setTempApiKey] = useState(apiKey);
   const [showApiKey, setShowApiKey] = useState(false);
 
@@ -86,8 +86,12 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Current Settings</Text>
           <View style={styles.settingItem}>
-            <Text style={styles.settingLabel}>Language</Text>
+            <Text style={styles.settingLabel}>Your Language</Text>
             <Text style={styles.settingValue}>{userLanguage}</Text>
+          </View>
+          <View style={styles.settingItem}>
+            <Text style={styles.settingLabel}>Translate To</Text>
+            <Text style={styles.settingValue}>{targetLanguage}</Text>
           </View>
           <View style={styles.settingItem}>
             <Text style={styles.settingLabel}>API Status</Text>
@@ -106,6 +110,18 @@ export default function SettingsScreen() {
           <View style={styles.settingItem}>
             <Text style={styles.settingLabel}>Data Storage</Text>
             <Text style={styles.settingValue}>Local (On Device)</Text>
+          </View>
+          <View style={styles.settingItem}>
+            <Text style={styles.settingLabel}>Speech-to-Text API</Text>
+            <Text style={styles.settingValue}>ElevenLabs Scribe v1</Text>
+          </View>
+          <View style={styles.settingItem}>
+            <Text style={styles.settingLabel}>Translation API</Text>
+            <Text style={styles.settingValue}>ElevenLabs Dubbing</Text>
+          </View>
+          <View style={styles.settingItem}>
+            <Text style={styles.settingLabel}>Text-to-Speech API</Text>
+            <Text style={styles.settingValue}>ElevenLabs Multilingual v2</Text>
           </View>
         </View>
 

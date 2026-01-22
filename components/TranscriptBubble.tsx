@@ -1,5 +1,6 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View, ActivityIndicator } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 interface Message {
   id: string;
@@ -10,18 +11,21 @@ interface Message {
   originalLanguage: string;
   timestamp: Date;
   speakerColor?: string;
+  isTranslating?: boolean;
 }
 
 interface TranscriptBubbleProps {
   message: Message;
   isOwnMessage: boolean;
   speakerColor?: string;
+  targetLanguage?: string;
 }
 
 export default function TranscriptBubble({
   message,
   isOwnMessage,
   speakerColor,
+  targetLanguage = "English",
 }: TranscriptBubbleProps) {
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -29,6 +33,8 @@ export default function TranscriptBubble({
 
   const bubbleColor = speakerColor || (isOwnMessage ? "#9BB068" : "#F5F0E8");
   const isLightBubble = !isOwnMessage && !speakerColor;
+  const showTranslation = message.originalLanguage !== "English" || message.originalText !== message.translatedText;
+  const isAlreadySameLanguage = message.originalLanguage === targetLanguage;
 
   return (
     <View
@@ -50,31 +56,63 @@ export default function TranscriptBubble({
           <Text style={[styles.name, !isLightBubble && styles.lightText]}>
             {message.participantName}
           </Text>
-          <Text style={[styles.language, !isLightBubble && styles.lightTextFaded]}>
-            ({message.originalLanguage})
-          </Text>
+          <View style={styles.languageBadge}>
+            <Text style={[styles.language, !isLightBubble && styles.lightTextFaded]}>
+              {message.originalLanguage}
+            </Text>
+          </View>
           <Text style={[styles.time, !isLightBubble && styles.lightTextFaded]}>
             {formatTime(message.timestamp)}
           </Text>
         </View>
+        
+        {/* Original Text */}
         <View style={styles.originalContainer}>
-          <Text style={[styles.originalLabel, !isLightBubble && styles.lightTextFaded]}>
-            Original:
-          </Text>
+          <View style={styles.labelRow}>
+            <Ionicons 
+              name="text" 
+              size={12} 
+              color={isLightBubble ? "#A69783" : "rgba(255, 255, 255, 0.7)"} 
+            />
+            <Text style={[styles.originalLabel, !isLightBubble && styles.lightTextFaded]}>
+              Original ({message.originalLanguage})
+            </Text>
+          </View>
           <Text style={[styles.originalText, !isLightBubble && styles.lightText]}>
             {message.originalText}
           </Text>
         </View>
+
+        {/* English Translation - Always shown */}
         <View
           style={[
             styles.translatedContainer,
-            { backgroundColor: isLightBubble ? "#EAE4D8" : "rgba(0, 0, 0, 0.15)" },
+            { backgroundColor: isLightBubble ? "#E8F5E9" : "rgba(255, 255, 255, 0.2)" },
           ]}
         >
-          <Text style={[styles.translatedLabel, !isLightBubble && styles.lightTextFaded]}>
-            Translated:
-          </Text>
-          <Text style={[styles.translatedText, !isLightBubble && styles.lightText]}>
+          <View style={styles.translatedHeader}>
+            <Ionicons 
+              name="language" 
+              size={12} 
+              color={isLightBubble ? "#4CAF50" : "#fff"} 
+            />
+            <Text style={[styles.translatedLabel, isLightBubble ? styles.englishLabel : styles.lightTextFaded]}>
+              {targetLanguage} Translation
+            </Text>
+            {message.isTranslating && (
+              <ActivityIndicator 
+                size="small" 
+                color={isLightBubble ? "#4CAF50" : "#fff"} 
+                style={styles.loadingIndicator} 
+              />
+            )}
+            {isAlreadySameLanguage && !message.isTranslating && (
+              <View style={styles.sameLangBadge}>
+                <Text style={styles.sameLangText}>Same</Text>
+              </View>
+            )}
+          </View>
+          <Text style={[styles.translatedText, isLightBubble ? styles.englishText : styles.lightText]}>
             {message.translatedText}
           </Text>
         </View>
@@ -109,7 +147,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 10,
     gap: 6,
   },
   name: {
@@ -120,9 +158,16 @@ const styles = StyleSheet.create({
   lightText: {
     color: "#fff",
   },
+  languageBadge: {
+    backgroundColor: "rgba(0, 0, 0, 0.1)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
   language: {
     fontSize: 10,
     color: "#A69783",
+    fontWeight: "600",
   },
   lightTextFaded: {
     color: "rgba(255, 255, 255, 0.7)",
@@ -133,30 +178,66 @@ const styles = StyleSheet.create({
     marginLeft: "auto",
   },
   originalContainer: {
-    marginBottom: 8,
+    marginBottom: 10,
+  },
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 4,
   },
   originalLabel: {
     fontSize: 10,
     color: "#A69783",
-    marginBottom: 2,
+    fontWeight: "500",
   },
   originalText: {
     fontSize: 14,
     color: "#5C4D3C",
+    lineHeight: 20,
   },
   translatedContainer: {
-    backgroundColor: "#EAE4D8",
-    padding: 8,
+    padding: 10,
     borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: "#4CAF50",
+  },
+  translatedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 4,
   },
   translatedLabel: {
     fontSize: 10,
     color: "#A69783",
-    marginBottom: 2,
+    fontWeight: "600",
+  },
+  englishLabel: {
+    color: "#4CAF50",
+  },
+  loadingIndicator: {
+    marginLeft: 8,
+  },
+  sameLangBadge: {
+    backgroundColor: "#E0E0E0",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  sameLangText: {
+    fontSize: 9,
+    color: "#757575",
+    fontWeight: "600",
   },
   translatedText: {
     fontSize: 14,
     color: "#5C4D3C",
-    fontStyle: "italic",
+    fontWeight: "500",
+    lineHeight: 20,
+  },
+  englishText: {
+    color: "#2E7D32",
   },
 });

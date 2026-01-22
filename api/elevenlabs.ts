@@ -228,20 +228,229 @@ export async function translateText(
   targetLanguage: string,
   apiKey: string
 ): Promise<string | null> {
+  const fullText = text.trim();
+  
+  console.log("=== translateText API function ===");
+  console.log("FULL text received:", fullText);
+  console.log("Text length:", fullText.length);
+  console.log("Source language:", sourceLanguage);
+  console.log("Target language:", targetLanguage);
+  
+  if (sourceLanguage === targetLanguage) {
+    console.log("Same language, returning original");
+    return fullText;
+  }
+
+  if (!apiKey) {
+    console.error("No API key provided for translation");
+    throw new Error("API key is required for translation");
+  }
+
+  const sourceLangCode = TTS_LANGUAGE_CODES[sourceLanguage] || "en";
+  const targetLangCode = TTS_LANGUAGE_CODES[targetLanguage] || "en";
+  
+  console.log("Source lang code:", sourceLangCode);
+  console.log("Target lang code:", targetLangCode);
+  
   try {
-    return simulateTranslation(text, sourceLanguage, targetLanguage);
-  } catch (error) {
-    console.error("Translation error:", error);
-    return null;
+    console.log("Attempting translation via TTS + Dubbing pipeline...");
+    
+    // Generate speech in source language
+    const voiceId = VOICE_IDS[sourceLanguage] || VOICE_IDS.default;
+    
+    const ttsResponse = await fetch(
+      `${ELEVENLABS_API_URL}/text-to-speech/${voiceId}`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: fullText,
+          model_id: "eleven_multilingual_v2",
+          language_code: sourceLangCode,
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+        }),
+      }
+    );
+
+    if (!ttsResponse.ok) {
+      const errorText = await ttsResponse.text();
+      console.error("TTS API error:", ttsResponse.status, errorText);
+      throw new Error(`TTS failed: ${ttsResponse.status} - ${errorText.substring(0, 100)}`);
+    }
+
+    console.log("TTS successful, creating dubbing project...");
+
+    // Get audio as blob
+    const audioBlob = await ttsResponse.blob();
+    console.log("Audio blob size:", audioBlob.size);
+
+    // Create FormData for dubbing - must specify target_lang (singular, not array)
+    const formData = new FormData();
+    formData.append("file", audioBlob, "audio_to_translate.mp3");
+    formData.append("source_lang", sourceLangCode);
+    formData.append("target_lang", targetLangCode);
+    formData.append("mode", "automatic");
+    formData.append("num_speakers", "1");
+    formData.append("watermark", "false");
+
+    console.log("Dubbing request - source_lang:", sourceLangCode, "target_lang:", targetLangCode);
+
+    // Create dubbing project
+    const dubbingResponse = await fetch(`${ELEVENLABS_API_URL}/dubbing`, {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+      },
+      body: formData,
+    });
+
+    if (!dubbingResponse.ok) {
+      const errorText = await dubbingResponse.text();
+      console.error("Dubbing API error:", dubbingResponse.status, errorText);
+      
+      // Parse error for better debugging
+      let errorDetail = errorText;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.detail) {
+          if (typeof errorJson.detail === "object") {
+            errorDetail = `${errorJson.detail.status}: ${errorJson.detail.message}`;
+          } else {
+            errorDetail = errorJson.detail;
+          }
+        }
+      } catch (e) {
+        // Keep original error text
+      }
+      
+      // Handle specific 400 errors
+      if (dubbingResponse.status === 400) {
+        console.error("Dubbing 400 error details:", {
+          source_lang: sourceLangCode,
+          target_lang: targetLangCode,
+          error: errorDetail
+        });
+        throw new Error(`Dubbing validation error: ${errorDetail}`);
+      }
+      
+      throw new Error(`Dubbing failed: ${dubbingResponse.status} - ${errorDetail}`);
+    }
+
+    const dubbingData = await dubbingResponse.json();
+    const dubbingId = dubbingData.dubbing_id;
+    
+    console.log("Dubbing ID:", dubbingId);
+    console.log("Expected duration:", dubbingData.expected_duration_sec);
+
+    // Poll for dubbing completion
+    let attempts = 0;
+    const maxAttempts = 60;
+    let dubbingStatus = "dubbing";
+    let lastStatusData: any = null;
+    
+    while ((dubbingStatus === "dubbing" || dubbingStatus === "transcribing") && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const statusResponse = await fetch(
+        `${ELEVENLABS_API_URL}/dubbing/${dubbingId}`,
+        {
+          headers: {
+            "xi-api-key": apiKey,
+          },
+        }
+      );
+
+      if (!statusResponse.ok) {
+        console.error("Status check failed:", statusResponse.status);
+        attempts++;
+        continue;
+      }
+
+      lastStatusData = await statusResponse.json();
+      dubbingStatus = lastStatusData.status;
+      console.log("Dubbing status:", dubbingStatus, "attempt:", attempts + 1);
+      
+      if (lastStatusData.error) {
+        console.error("Dubbing error from API:", lastStatusData.error);
+        throw new Error(`Dubbing error: ${lastStatusData.error}`);
+      }
+      
+      attempts++;
+    }
+
+    if (dubbingStatus !== "dubbed") {
+      console.error("Dubbing did not complete. Final status:", dubbingStatus, "Last data:", JSON.stringify(lastStatusData));
+      throw new Error(`Dubbing timeout. Status: ${dubbingStatus}`);
+    }
+
+    // Get the transcript for the target language
+    console.log("Getting dubbed transcript for language:", targetLangCode);
+    
+    const transcriptResponse = await fetch(
+      `${ELEVENLABS_API_URL}/dubbing/${dubbingId}/transcript/${targetLangCode}`,
+      {
+        headers: {
+          "xi-api-key": apiKey,
+        },
+      }
+    );
+
+    if (!transcriptResponse.ok) {
+      const errorText = await transcriptResponse.text();
+      console.error("Transcript API error:", transcriptResponse.status, errorText);
+      throw new Error(`Transcript fetch failed: ${transcriptResponse.status} - ${errorText.substring(0, 100)}`);
+    }
+
+    const transcriptData = await transcriptResponse.json();
+    console.log("Transcript data:", JSON.stringify(transcriptData));
+
+    // Extract translated text from transcript
+    let translatedText = "";
+    if (transcriptData.utterances && transcriptData.utterances.length > 0) {
+      translatedText = transcriptData.utterances
+        .map((u: any) => u.text || u.translated_text || "")
+        .join(" ")
+        .trim();
+    } else if (transcriptData.text) {
+      translatedText = transcriptData.text;
+    } else if (typeof transcriptData === "string") {
+      translatedText = transcriptData;
+    }
+
+    // Clean up - delete the dubbing project
+    try {
+      await fetch(`${ELEVENLABS_API_URL}/dubbing/${dubbingId}`, {
+        method: "DELETE",
+        headers: {
+          "xi-api-key": apiKey,
+        },
+      });
+      console.log("Deleted dubbing project:", dubbingId);
+    } catch (deleteError) {
+      console.log("Failed to delete dubbing project:", deleteError);
+    }
+
+    if (translatedText) {
+      console.log("=== FINAL translated text ===");
+      console.log("Final text:", translatedText);
+      console.log("Final text length:", translatedText.length);
+      return translatedText;
+    }
+
+    throw new Error("No translated text in response");
+  } catch (error: any) {
+    console.error("Translation pipeline error:", error);
+    throw error;
   }
 }
 
-function simulateTranslation(text: string, sourceLanguage: string, targetLanguage: string): string {
-  if (sourceLanguage === targetLanguage) {
-    return text;
-  }
-  return `[${targetLanguage}] ${text}`;
-}
+
 
 export async function textToSpeech(
   text: string,

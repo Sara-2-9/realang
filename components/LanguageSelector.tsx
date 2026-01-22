@@ -47,6 +47,7 @@ interface LanguageSelectorProps {
   onClose: () => void;
   onSelect: (language: string) => void;
   selectedLanguage: string;
+  title?: string;
 }
 
 export default function LanguageSelector({
@@ -54,6 +55,7 @@ export default function LanguageSelector({
   onClose,
   onSelect,
   selectedLanguage,
+  title = "Select Language",
 }: LanguageSelectorProps) {
   const renderLanguage = ({ item }: any) => (
     <TouchableOpacity
@@ -81,7 +83,7 @@ export default function LanguageSelector({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
       <SafeAreaView style={styles.container} edges={["top"]}>
         <View style={styles.header}>
-          <Text style={styles.title}>Select Language</Text>
+          <Text style={styles.title}>{title}</Text>
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
             <Ionicons name="close" size={28} color="#5C4D3C" />
           </TouchableOpacity>

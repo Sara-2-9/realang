@@ -19,7 +19,7 @@ import { File, Paths } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import SpeakerBubble from "../components/SpeakerBubble";
 import TranscriptBubble from "../components/TranscriptBubble";
-import { transcribeAudio, TranscriptionResult } from "../api/elevenlabs";
+import { transcribeAudio, translateText, TranscriptionResult } from "../api/elevenlabs";
 
 interface Speaker {
   id: string;
@@ -39,6 +39,7 @@ interface Message {
   originalLanguage: string;
   timestamp: Date;
   speakerColor: string;
+  isTranslating?: boolean;
 }
 
 const SPEAKER_COLORS = [
@@ -58,7 +59,7 @@ const RECORDING_DURATION_MS = 6000; // Record 6 seconds at a time for better tra
 
 export default function ListeningScreen() {
   const router = useRouter();
-  const { userLanguage, apiKey } = useTranslation();
+  const { userLanguage, targetLanguage, apiKey } = useTranslation();
 
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -67,7 +68,9 @@ export default function ListeningScreen() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingCount, setRecordingCount] = useState(0);
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [apiCallLog, setApiCallLog] = useState<string[]>([]);
   const [lastError, setLastError] = useState<string>("");
+  const [translationError, setTranslationError] = useState<string>("");
   const flatListRef = useRef<FlatList>(null);
   const speakerMapRef = useRef<Map<string, Speaker>>(new Map());
   const isListeningRef = useRef(false);
@@ -174,7 +177,61 @@ export default function ListeningScreen() {
     return newSpeaker;
   };
 
-  const processTranscriptionResult = (result: TranscriptionResult) => {
+  const translateMessage = async (messageId: string, originalText: string, sourceLanguage: string) => {
+    try {
+      // Ensure we're translating the FULL original text
+      const textToTranslate = originalText.trim();
+      
+      console.log("=== translateMessage called ===");
+      console.log("Message ID:", messageId);
+      console.log("Full text to translate:", textToTranslate);
+      console.log("Text length:", textToTranslate.length);
+      console.log("From:", sourceLanguage, "To:", targetLanguage);
+      
+      setTranslationError("");
+      
+      // Translate the FULL text to target language
+      const translatedText = await translateText(textToTranslate, sourceLanguage, targetLanguage, apiKey);
+      
+      console.log("Translation result:", translatedText);
+      console.log("Translation result length:", translatedText?.length);
+      
+      if (translatedText) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId
+              ? { ...msg, translatedText, isTranslating: false }
+              : msg
+          )
+        );
+        console.log("Translation complete for message:", messageId);
+        console.log("Final translated text stored:", translatedText);
+        logApiCall("ElevenLabs", "/dubbing", "Success");
+      } else {
+        throw new Error("Translation returned null");
+      }
+    } catch (error: any) {
+      const errorMsg = error?.message || String(error);
+      console.error("Translation error for message:", messageId, errorMsg);
+      setTranslationError(`Translation failed: ${errorMsg}`);
+      logApiCall("ElevenLabs", "/dubbing", `Error: ${errorMsg.substring(0, 50)}`);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, translatedText: `[Translation failed: ${errorMsg}] ${msg.originalText}`, isTranslating: false }
+            : msg
+        )
+      );
+    }
+  };
+
+  const logApiCall = (api: string, endpoint: string, status: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `[${timestamp}] ${api}: ${endpoint} - ${status}`;
+    setApiCallLog((prev) => [...prev.slice(-9), logEntry]);
+  };
+
+  const processTranscriptionResult = async (result: TranscriptionResult) => {
     console.log("Processing transcription result:", JSON.stringify(result));
     
     if (!result.text || result.text.trim() === "") {
@@ -183,13 +240,26 @@ export default function ListeningScreen() {
     }
 
     const detectedLanguage = result.detected_language || "Unknown";
-    setDebugInfo(`Detected: ${detectedLanguage}\nText: ${result.text.substring(0, 50)}...`);
+    
+    // Use the FULL text from the transcription result
+    const fullTranscribedText = result.text.trim();
+    
+    setDebugInfo(`Detected: ${detectedLanguage}\nFull text: ${fullTranscribedText.substring(0, 100)}...`);
+    console.log("Full transcribed text:", fullTranscribedText);
+    
+    // Translate to target language, unless already in target language
+    const needsTranslation = detectedLanguage !== targetLanguage;
     
     // Process utterances if available (speaker diarization)
     if (result.utterances && result.utterances.length > 0) {
       console.log("Processing utterances:", result.utterances.length);
-      result.utterances.forEach((utterance) => {
-        if (!utterance.text || utterance.text.trim() === "") return;
+      
+      for (const utterance of result.utterances) {
+        // Use the full utterance text, trimmed
+        const utteranceText = utterance.text?.trim();
+        if (!utteranceText) continue;
+        
+        console.log("Processing utterance text:", utteranceText);
         
         const speakerId = utterance.speaker_id || "speaker_0";
         const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
@@ -199,30 +269,39 @@ export default function ListeningScreen() {
         
         setSpeakers(Array.from(speakerMapRef.current.values()));
         
-        const translatedText = detectedLanguage === userLanguage 
-          ? utterance.text 
-          : `[${userLanguage}] ${utterance.text}`;
+        const messageId = Date.now().toString() + speakerId + Math.random();
         
+        // Create message with placeholder for translation - use FULL utterance text
         const newMessage: Message = {
-          id: Date.now().toString() + speakerId + Math.random(),
+          id: messageId,
           participantId: speaker.id,
           participantName: speaker.name,
-          originalText: utterance.text,
-          translatedText: translatedText,
+          originalText: utteranceText,
+          translatedText: needsTranslation ? `Translating to ${targetLanguage}...` : utteranceText,
           originalLanguage: detectedLanguage,
           timestamp: new Date(),
           speakerColor: speaker.color,
+          isTranslating: needsTranslation,
         };
 
         setMessages((prev) => [...prev, newMessage]);
+
+        // Translate the FULL utterance text
+        if (needsTranslation) {
+          logApiCall("ElevenLabs", "/dubbing (translate)", "Calling...");
+          console.log("Sending full text for translation:", utteranceText);
+          translateMessage(messageId, utteranceText, detectedLanguage);
+        }
 
         setTimeout(() => {
           speaker.isSpeaking = false;
           setSpeakers(Array.from(speakerMapRef.current.values()));
         }, 1500);
-      });
+      }
     } else {
-      console.log("No utterances, using single speaker");
+      // No utterances - use the full transcribed text as a single message
+      console.log("No utterances, using full text as single speaker:", fullTranscribedText);
+      
       const speakerId = "speaker_0";
       const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
       
@@ -231,22 +310,28 @@ export default function ListeningScreen() {
       
       setSpeakers(Array.from(speakerMapRef.current.values()));
       
-      const translatedText = detectedLanguage === userLanguage 
-        ? result.text 
-        : `[${userLanguage}] ${result.text}`;
+      const messageId = Date.now().toString() + Math.random();
       
+      // Use the FULL transcribed text
       const newMessage: Message = {
-        id: Date.now().toString() + Math.random(),
+        id: messageId,
         participantId: speaker.id,
         participantName: speaker.name,
-        originalText: result.text,
-        translatedText: translatedText,
+        originalText: fullTranscribedText,
+        translatedText: needsTranslation ? `Translating to ${targetLanguage}...` : fullTranscribedText,
         originalLanguage: detectedLanguage,
         timestamp: new Date(),
         speakerColor: speaker.color,
+        isTranslating: needsTranslation,
       };
 
       setMessages((prev) => [...prev, newMessage]);
+
+      // Translate the FULL text
+      if (needsTranslation) {
+        console.log("Sending full text for translation:", fullTranscribedText);
+        translateMessage(messageId, fullTranscribedText, detectedLanguage);
+      }
 
       setTimeout(() => {
         speaker.isSpeaking = false;
@@ -383,7 +468,9 @@ export default function ListeningScreen() {
       }
 
       // Transcribe the audio
+      logApiCall("ElevenLabs", "/v1/speech-to-text", "Calling...");
       const result = await transcribeAudio(uri, apiKey);
+      logApiCall("ElevenLabs", "/v1/speech-to-text", result?.text ? "Success" : "No speech");
       
       console.log("Transcription result:", JSON.stringify(result));
 
@@ -396,7 +483,7 @@ export default function ListeningScreen() {
 
       if (result && result.text && result.text.trim()) {
         setLastError("");
-        processTranscriptionResult(result);
+        await processTranscriptionResult(result);
       } else {
         console.log("No speech detected or empty result");
         setDebugInfo("No speech detected, listening...");
@@ -505,6 +592,7 @@ export default function ListeningScreen() {
       message={item}
       isOwnMessage={false}
       speakerColor={item.speakerColor}
+      targetLanguage={targetLanguage}
     />
   );
 
@@ -548,14 +636,23 @@ export default function ListeningScreen() {
           </Text>
         </View>
         <View style={styles.languageBadge}>
-          <Text style={styles.languageBadgeText}>{userLanguage}</Text>
+          <Text style={styles.languageBadgeText}>→ {targetLanguage.substring(0, 3).toUpperCase()}</Text>
         </View>
       </View>
 
       {/* Debug info */}
       <View style={styles.debugContainer}>
-        <Text style={styles.debugText} numberOfLines={3}>{debugInfo}</Text>
-        {lastError ? <Text style={styles.errorText}>{lastError}</Text> : null}
+        <Text style={styles.debugText} numberOfLines={2}>{debugInfo}</Text>
+        {lastError ? <Text style={styles.errorText}>STT Error: {lastError}</Text> : null}
+        {translationError ? <Text style={styles.translationErrorText}>Translation Error: {translationError}</Text> : null}
+        {apiCallLog.length > 0 && (
+          <View style={styles.apiLogContainer}>
+            <Text style={styles.apiLogTitle}>API Calls:</Text>
+            {apiCallLog.slice(-5).map((log, index) => (
+              <Text key={index} style={styles.apiLogEntry}>{log}</Text>
+            ))}
+          </View>
+        )}
       </View>
 
       {/* Speakers visualization */}
@@ -577,7 +674,13 @@ export default function ListeningScreen() {
 
       {/* Transcript */}
       <View style={styles.transcriptContainer}>
-        <Text style={styles.transcriptTitle}>Conversation</Text>
+        <View style={styles.transcriptHeader}>
+          <Text style={styles.transcriptTitle}>Conversation</Text>
+          <View style={styles.translationNote}>
+            <Ionicons name="language" size={14} color="#9BB068" />
+            <Text style={styles.translationNoteText}>Translated to {targetLanguage}</Text>
+          </View>
+        </View>
         {messages.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="chatbubbles-outline" size={48} color="#B5A898" />
@@ -588,7 +691,7 @@ export default function ListeningScreen() {
             </Text>
             {isListening && (
               <Text style={styles.emptyStateHint}>
-                Using ElevenLabs Scribe for transcription
+                All speech will be translated to {targetLanguage}
               </Text>
             )}
           </View>
@@ -702,6 +805,31 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
+  translationErrorText: {
+    fontSize: 11,
+    color: "#FF6F00",
+    marginTop: 4,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontWeight: "bold",
+  },
+  apiLogContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#E8DFD0",
+  },
+  apiLogTitle: {
+    fontSize: 11,
+    fontWeight: "bold",
+    color: "#5C4D3C",
+    marginBottom: 4,
+  },
+  apiLogEntry: {
+    fontSize: 10,
+    color: "#6B5D4D",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    marginBottom: 2,
+  },
   speakersContainer: {
     padding: 16,
     minHeight: 100,
@@ -727,12 +855,31 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
   },
+  transcriptHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   transcriptTitle: {
     fontSize: 14,
     color: "#A69783",
     textTransform: "uppercase",
     letterSpacing: 1,
-    marginBottom: 12,
+  },
+  translationNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#E8F5E9",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  translationNoteText: {
+    fontSize: 11,
+    color: "#9BB068",
+    fontWeight: "600",
   },
   emptyState: {
     flex: 1,

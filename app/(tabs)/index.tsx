@@ -15,8 +15,9 @@ import LanguageSelector from "../../components/LanguageSelector";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { userLanguage, setUserLanguage } = useTranslation();
+  const { userLanguage, setUserLanguage, targetLanguage, setTargetLanguage } = useTranslation();
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
+  const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useState(false);
 
   const handleStartListening = () => {
     router.push("/listening");
@@ -42,6 +43,18 @@ export default function HomeScreen() {
           >
             <Ionicons name="language" size={24} color="#8B7355" />
             <Text style={styles.languageText}>{userLanguage}</Text>
+            <Ionicons name="chevron-down" size={20} color="#B5A898" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.languageSection}>
+          <Text style={styles.sectionTitle}>Translate To</Text>
+          <TouchableOpacity
+            style={styles.languageButton}
+            onPress={() => setShowTargetLanguageSelector(true)}
+          >
+            <Ionicons name="arrow-forward-circle" size={24} color="#9BB068" />
+            <Text style={styles.languageText}>{targetLanguage}</Text>
             <Ionicons name="chevron-down" size={20} color="#B5A898" />
           </TouchableOpacity>
         </View>
@@ -101,6 +114,18 @@ export default function HomeScreen() {
           setShowLanguageSelector(false);
         }}
         selectedLanguage={userLanguage}
+        title="Select Your Language"
+      />
+
+      <LanguageSelector
+        visible={showTargetLanguageSelector}
+        onClose={() => setShowTargetLanguageSelector(false)}
+        onSelect={(lang) => {
+          setTargetLanguage(lang);
+          setShowTargetLanguageSelector(false);
+        }}
+        selectedLanguage={targetLanguage}
+        title="Select Translation Language"
       />
     </SafeAreaView>
   );
