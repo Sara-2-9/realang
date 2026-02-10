@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import React, { useState, useEffect } from "react";
 import {
   StyleSheet,
@@ -8,12 +9,16 @@ import {
   TextInput,
   ScrollView,
   Alert,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../../context/TranslationContext";
+import { useAuth } from "../../context/AuthContext";
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { apiKey, setApiKey, userLanguage, targetLanguage } = useTranslation();
+  const { user, logout } = useAuth();
   const [tempApiKey, setTempApiKey] = useState(apiKey);
   const [showApiKey, setShowApiKey] = useState(false);
 
@@ -49,6 +54,43 @@ export default function SettingsScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Text style={styles.title}>Settings</Text>
+
+        {/* User Profile Section */}
+        <View style={styles.section}>
+          <View style={styles.profileRow}>
+            <Image
+              source={{ uri: user?.avatarUrl || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop" }}
+              style={styles.avatar}
+            />
+            <View style={styles.profileInfo}>
+              <Text style={styles.profileName}>{user?.name || "User"}</Text>
+              <Text style={styles.profileEmail}>{user?.email || ""}</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={() => {
+              Alert.alert(
+                "Sign Out",
+                "Are you sure you want to sign out?",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Sign Out",
+                    style: "destructive",
+                    onPress: async () => {
+                      await logout();
+                      router.replace("/login");
+                    },
+                  },
+                ]
+              );
+            }}
+          >
+            <Ionicons name="log-out-outline" size={20} color="#D4574A" />
+            <Text style={styles.logoutButtonText}>Sign Out</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ElevenLabs API Key</Text>
@@ -269,5 +311,47 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#B5A898",
     marginTop: 12,
+  },
+  profileRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    marginRight: 14,
+    borderWidth: 2,
+    borderColor: "#E8DFD0",
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  profileName: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#5C4D3C",
+    marginBottom: 2,
+  },
+  profileEmail: {
+    fontSize: 14,
+    color: "#A69783",
+  },
+  logoutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FBF8F3",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#D4574A",
+    gap: 8,
+  },
+  logoutButtonText: {
+    color: "#D4574A",
+    fontSize: 15,
+    fontWeight: "bold",
   },
 });
