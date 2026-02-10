@@ -80,14 +80,12 @@ Expo Router uses file-based routing:
 
 Create a `.env` file in project root for sensitive values:
 ```
-API_URL=your_api_url
+EXPO_PUBLIC_ELEVENLABS_API_KEY=your_api_key_here
 ```
 
-Access via `expo-constants`:
-```ts
-import Constants from 'expo-constants';
-const apiUrl = Constants.expoConfig?.extra?.apiUrl;
-```
+The API key is automatically loaded by the TranslationContext and used as default for all users.
+
+**Note**: Environment variables with `EXPO_PUBLIC_` prefix are embedded at build time and available in the client.
 
 ## Running the App
 
@@ -137,3 +135,13 @@ eas build --profile production
 1. Add function to appropriate file in `api/`
 2. Use async/await with proper error handling
 3. Update types as needed
+
+## API Key Configuration
+
+The ElevenLabs API key is pre-configured via environment variable (`EXPO_PUBLIC_ELEVENLABS_API_KEY`):
+
+1. Copy `.env.example` to `.env`
+2. Add your API key
+3. Restart Expo dev server
+
+The key is loaded in `TranslationContext` as default value. Users cannot override it from the UI (settings page shows API as "Connected" without input field).

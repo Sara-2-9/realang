@@ -45,8 +45,12 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       if (storedTargetLanguage) {
         setTargetLanguageState(storedTargetLanguage);
       }
+      // Use stored API key or fallback to environment variable
+      const defaultApiKey = process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY || "";
       if (storedApiKey) {
         setApiKeyState(storedApiKey);
+      } else if (defaultApiKey) {
+        setApiKeyState(defaultApiKey);
       }
     } catch (error) {
       console.error("Error loading stored data:", error);
