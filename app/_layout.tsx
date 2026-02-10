@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 import React from "react";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar, ActivityIndicator, View } from "react-native";
 import { TranslationProvider, useTranslation } from "../context/TranslationContext";
 import { AuthProvider, useAuth } from "../context/AuthContext";
@@ -38,8 +39,7 @@ function RootLayoutContent() {
         <Stack.Screen
           name="listening"
           options={{
-            headerShown: false,
-            presentation: "fullScreenModal"
+            headerShown: false
           }}
           redirect={!isAuthenticated}
         />
@@ -50,10 +50,12 @@ function RootLayoutContent() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <TranslationProvider>
-        <RootLayoutContent />
-      </TranslationProvider>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <TranslationProvider>
+          <RootLayoutContent />
+        </TranslationProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

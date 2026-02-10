@@ -620,7 +620,7 @@ export default function ListeningScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#5C4D3C" />
@@ -742,7 +742,7 @@ export default function ListeningScreen() {
           {isListening ? "Tap to stop listening" : "Tap to start listening"}
         </Text>
       </View>
-    </SafeAreaView>
+    </ SafeAreaView>
   );
 }
 
