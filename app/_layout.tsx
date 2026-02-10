@@ -1,7 +1,6 @@
 import { Stack } from "expo-router";
 import React from "react";
 import { StatusBar, ActivityIndicator, View } from "react-native";
-import "react-native-reanimated";
 import { TranslationProvider, useTranslation } from "../context/TranslationContext";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 
