@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-const AUTH_STORAGE_KEY = "realang_auth_user";
+import { supabase, Profile } from "../lib/supabase";
+import { Session, User as SupabaseUser } from "@supabase/supabase-js";
 
 interface User {
   id: string;
@@ -21,67 +20,91 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Mock user database
-const MOCK_USERS: Record<string, { password: string; user: User }> = {
-  "demo@realang.app": {
-    password: "password123",
-    user: {
-      id: "usr_1",
-      email: "demo@realang.app",
-      name: "Demo User",
-      avatarUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop",
-    },
-  },
-};
+// Convert Supabase user + profile to app User format
+function formatUser(supabaseUser: SupabaseUser, profile?: Profile | null): User {
+  return {
+    id: supabaseUser.id,
+    email: supabaseUser.email || "",
+    name: profile?.name || supabaseUser.user_metadata?.name || supabaseUser.email?.split("@")[0] || "User",
+    avatarUrl: profile?.avatar_url || supabaseUser.user_metadata?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${supabaseUser.id}`,
+  };
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(null);
 
   useEffect(() => {
-    loadStoredUser();
+    // Check for existing session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session?.user) {
+        fetchProfile(session.user);
+      } else {
+        setIsLoading(false);
+      }
+    });
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        setSession(session);
+        if (session?.user) {
+          await fetchProfile(session.user);
+        } else {
+          setUser(null);
+          setIsLoading(false);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const loadStoredUser = async () => {
+  async function fetchProfile(supabaseUser: SupabaseUser) {
     try {
-      const stored = await AsyncStorage.getItem(AUTH_STORAGE_KEY);
-      if (stored) {
-        setUser(JSON.parse(stored));
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", supabaseUser.id)
+        .single();
+
+      if (error && error.code !== "PGRST116") {
+        // PGRST116 = no rows returned, which is fine for new users
+        console.error("Error fetching profile:", error);
       }
+
+      setUser(formatUser(supabaseUser, profile));
     } catch (error) {
-      console.error("Error loading stored user:", error);
+      console.error("Error in fetchProfile:", error);
+      setUser(formatUser(supabaseUser));
     } finally {
       setIsLoading(false);
     }
-  };
+  }
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
 
-    const normalizedEmail = email.trim().toLowerCase();
+      if (error) {
+        return { success: false, error: error.message };
+      }
 
-    const mockEntry = MOCK_USERS[normalizedEmail];
-    if (mockEntry && mockEntry.password === password) {
-      setUser(mockEntry.user);
-      await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(mockEntry.user));
-      return { success: true };
+      if (data.user) {
+        await fetchProfile(data.user);
+        return { success: true };
+      }
+
+      return { success: false, error: "Login failed" };
+    } catch (error) {
+      console.error("Login error:", error);
+      return { success: false, error: "An unexpected error occurred" };
     }
-
-    // Also accept any email/password combo where password is at least 6 chars (mock flexibility)
-    if (password.length >= 6) {
-      const mockUser: User = {
-        id: "usr_" + Date.now(),
-        email: normalizedEmail,
-        name: normalizedEmail.split("@")[0].replace(/[._]/g, " "),
-        avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop",
-      };
-      setUser(mockUser);
-      await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(mockUser));
-      return { success: true };
-    }
-
-    return { success: false, error: "Invalid email or password. Password must be at least 6 characters." };
   };
 
   const register = async (
@@ -89,38 +112,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string
   ): Promise<{ success: boolean; error?: string }> => {
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      if (!name.trim()) {
+        return { success: false, error: "Name is required." };
+      }
 
-    if (!name.trim()) {
-      return { success: false, error: "Name is required." };
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+        options: {
+          data: {
+            name: name.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      if (data.user) {
+        // Create profile in database
+        const { error: profileError } = await supabase.from("profiles").insert({
+          id: data.user.id,
+          email: data.user.email || email.trim().toLowerCase(),
+          name: name.trim(),
+          avatar_url: null,
+        });
+
+        if (profileError) {
+          console.error("Error creating profile:", profileError);
+          // Don't fail registration if profile creation fails
+        }
+
+        await fetchProfile(data.user);
+        return { success: true };
+      }
+
+      return { success: false, error: "Registration failed" };
+    } catch (error) {
+      console.error("Registration error:", error);
+      return { success: false, error: "An unexpected error occurred" };
     }
-    if (!email.trim() || !email.includes("@")) {
-      return { success: false, error: "A valid email is required." };
-    }
-    if (password.length < 6) {
-      return { success: false, error: "Password must be at least 6 characters." };
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const newUser: User = {
-      id: "usr_" + Date.now(),
-      email: normalizedEmail,
-      name: name.trim(),
-      avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop",
-    };
-
-    // Save to mock database
-    MOCK_USERS[normalizedEmail] = { password, user: newUser };
-
-    setUser(newUser);
-    await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newUser));
-    return { success: true };
   };
 
   const logout = async () => {
-    setUser(null);
-    await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
   };
 
   return (

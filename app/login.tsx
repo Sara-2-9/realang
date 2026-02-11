@@ -145,13 +145,6 @@ export default function LoginScreen() {
             <TouchableOpacity style={styles.registerButton} onPress={handleGoToRegister}>
               <Text style={styles.registerButtonText}>Create an Account</Text>
             </TouchableOpacity>
-
-            <View style={styles.demoHint}>
-              <Ionicons name="information-circle-outline" size={16} color="#A69783" />
-              <Text style={styles.demoHintText}>
-                Demo: use any email with a 6+ char password
-              </Text>
-            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -285,16 +278,5 @@ const styles = StyleSheet.create({
     color: "#8B7355",
     fontSize: 16,
     fontWeight: "bold",
-  },
-  demoHint: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 24,
-    gap: 6,
-  },
-  demoHintText: {
-    fontSize: 12,
-    color: "#A69783",
   },
 });
