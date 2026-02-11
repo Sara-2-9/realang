@@ -132,19 +132,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data.user) {
-        // Create profile in database
-        const { error: profileError } = await supabase.from("profiles").insert({
-          id: data.user.id,
-          email: data.user.email || email.trim().toLowerCase(),
-          name: name.trim(),
-          avatar_url: null,
-        });
-
-        if (profileError) {
-          console.error("Error creating profile:", profileError);
-          // Don't fail registration if profile creation fails
-        }
-
+        // Profile is automatically created by database trigger
+        // Small delay to ensure trigger has executed
+        await new Promise((resolve) => setTimeout(resolve, 500));
         await fetchProfile(data.user);
         return { success: true };
       }
