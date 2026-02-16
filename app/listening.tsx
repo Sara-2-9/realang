@@ -19,7 +19,8 @@ import { File, Paths } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import SpeakerBubble from "../components/SpeakerBubble";
 import TranscriptBubble from "../components/TranscriptBubble";
-import { transcribeAudio, translateText, TranscriptionResult } from "../api/elevenlabs";
+import { transcribeAudio, TranscriptionResult } from "../api/elevenlabs";
+import { translateTextWithNLLB } from "../api/translation";
 
 interface Speaker {
   id: string;
@@ -190,8 +191,8 @@ export default function ListeningScreen() {
       
       setTranslationError("");
       
-      // Translate the FULL text to target language
-      const translatedText = await translateText(textToTranslate, sourceLanguage, targetLanguage, apiKey);
+      // Translate the FULL text to target language using NLLB-200 (FREE)
+      const translatedText = await translateTextWithNLLB(textToTranslate, sourceLanguage, targetLanguage);
       
       console.log("Translation result:", translatedText);
       console.log("Translation result length:", translatedText?.length);
@@ -206,7 +207,7 @@ export default function ListeningScreen() {
         );
         console.log("Translation complete for message:", messageId);
         console.log("Final translated text stored:", translatedText);
-        logApiCall("ElevenLabs", "/dubbing", "Success");
+        logApiCall("NLLB-200", "/translate", "Success");
       } else {
         throw new Error("Translation returned null");
       }
@@ -214,7 +215,7 @@ export default function ListeningScreen() {
       const errorMsg = error?.message || String(error);
       console.error("Translation error for message:", messageId, errorMsg);
       setTranslationError(`Translation failed: ${errorMsg}`);
-      logApiCall("ElevenLabs", "/dubbing", `Error: ${errorMsg.substring(0, 50)}`);
+      logApiCall("NLLB-200", "/translate", `Error: ${errorMsg.substring(0, 50)}`);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === messageId
@@ -288,7 +289,7 @@ export default function ListeningScreen() {
 
         // Translate the FULL utterance text
         if (needsTranslation) {
-          logApiCall("ElevenLabs", "/dubbing (translate)", "Calling...");
+          logApiCall("NLLB-200", "/translate", "Calling...");
           console.log("Sending full text for translation:", utteranceText);
           translateMessage(messageId, utteranceText, detectedLanguage);
         }
