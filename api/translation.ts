@@ -1,8 +1,12 @@
 // HuggingFace NLLB-200 Translation API
 // Free tier: ~1000 requests/day via Inference API
+// Docs: https://huggingface.co/docs/api-inference/index
 
-const HF_API_URL = "https://router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M";
+const HF_API_URL = "https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M";
 const HF_TOKEN = process.env.EXPO_PUBLIC_HF_TOKEN;
+
+// Wait time for model cold start (ms)
+const MODEL_LOADING_RETRY_DELAY = 10000;
 
 // Language code mapping from app languages to NLLB-200 codes (FLORES-200 format)
 const NLLB_LANGUAGE_CODES: Record<string, string> = {
@@ -82,79 +86,62 @@ export async function translateTextWithNLLB(
   console.log("Source code:", srcLangCode, "Target code:", tgtLangCode);
 
   try {
-    // Prepare the request body for NLLB
-    // NLLB requires special formatting with language tokens
+    // NLLB format: prepend source language token to input
+    // Example: "ita_Latn Ciao, come va?"
     const inputs = `${srcLangCode} ${fullText}`;
     
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
     
-    // Add Authorization header if token is available
     if (HF_TOKEN) {
       headers["Authorization"] = `Bearer ${HF_TOKEN}`;
     }
     
-    const response = await fetch(HF_API_URL, {
+    console.log("Sending request to HuggingFace...");
+    
+    let response = await fetch(HF_API_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        inputs: inputs,
-        parameters: {
-          src_lang: srcLangCode,
-          tgt_lang: tgtLangCode,
-        },
-      }),
+      body: JSON.stringify({ inputs }),
     });
-
-    console.log("Response status:", response.status);
+    
+    // Handle model loading state (503)
+    if (response.status === 503) {
+      console.log("Model is loading, waiting...");
+      await new Promise(resolve => setTimeout(resolve, MODEL_LOADING_RETRY_DELAY));
+      
+      response = await fetch(HF_API_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ inputs }),
+      });
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error("NLLB API error:", response.status, errorText);
-      
-      // If model is loading, retry after a delay
-      if (response.status === 503 || errorText.includes("currently loading")) {
-        console.log("Model is loading, waiting 10s and retrying...");
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        return translateTextWithNLLB(text, sourceLanguage, targetLanguage);
-      }
-      
-      throw new Error(`NLLB API error: ${response.status} - ${errorText.substring(0, 200)}`);
+      throw new Error(`NLLB API error: ${response.status}`);
     }
 
     const data = await response.json();
-    console.log("Response data:", JSON.stringify(data).substring(0, 200));
+    console.log("Response:", JSON.stringify(data).substring(0, 200));
 
-    // Handle different response formats from HuggingFace
+    // HuggingFace returns array: [{translation_text: "..."}]
     let translatedText = "";
     
     if (Array.isArray(data) && data.length > 0) {
-      // Format: [{"translation_text": "..."}]
-      if (data[0].translation_text) {
-        translatedText = data[0].translation_text;
-      } else if (data[0].generated_text) {
-        translatedText = data[0].generated_text;
-      }
-    } else if (typeof data === "object" && data.translation_text) {
-      translatedText = data.translation_text;
-    } else if (typeof data === "object" && data.generated_text) {
-      translatedText = data.generated_text;
-    } else if (typeof data === "string") {
-      translatedText = data;
+      translatedText = data[0].translation_text || data[0].generated_text || "";
     }
 
     if (!translatedText) {
-      console.error("Unexpected response format:", data);
-      throw new Error("Invalid response format from NLLB API");
+      throw new Error("Empty translation response");
     }
 
-    // Clean up the output (remove language code prefix if present)
+    // Remove target language token if present
     translatedText = translatedText.replace(new RegExp(`^${tgtLangCode}\\s*`), "").trim();
 
-    console.log("=== Translation complete ===");
-    console.log("Translated:", translatedText.substring(0, 100) + (translatedText.length > 100 ? "..." : ""));
-    
+    console.log("Translated:", translatedText);
     return translatedText;
   } catch (error: any) {
     console.error("NLLB translation error:", error);
