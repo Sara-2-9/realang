@@ -1,7 +1,8 @@
 // HuggingFace NLLB-200 Translation API
 // Free tier: ~1000 requests/day via Inference API
 
-const HF_API_URL = "https://api-inference.huggingface.co/models/facebook/nllb-200-distilled-600M";
+const HF_API_URL = "https://router.huggingface.co/hf-inference/models/facebook/nllb-200-distilled-600M";
+const HF_TOKEN = process.env.EXPO_PUBLIC_HF_TOKEN;
 
 // Language code mapping from app languages to NLLB-200 codes (FLORES-200 format)
 const NLLB_LANGUAGE_CODES: Record<string, string> = {
@@ -85,11 +86,18 @@ export async function translateTextWithNLLB(
     // NLLB requires special formatting with language tokens
     const inputs = `${srcLangCode} ${fullText}`;
     
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    
+    // Add Authorization header if token is available
+    if (HF_TOKEN) {
+      headers["Authorization"] = `Bearer ${HF_TOKEN}`;
+    }
+    
     const response = await fetch(HF_API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         inputs: inputs,
         parameters: {
@@ -160,11 +168,17 @@ export async function translateTextWithNLLB(
  */
 export async function checkNLLBStatus(): Promise<boolean> {
   try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    
+    if (HF_TOKEN) {
+      headers["Authorization"] = `Bearer ${HF_TOKEN}`;
+    }
+    
     const response = await fetch(HF_API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         inputs: "eng_Latn Hello",
         parameters: {
