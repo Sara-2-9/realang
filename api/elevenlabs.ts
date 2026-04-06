@@ -1,4 +1,4 @@
-import { Audio } from "expo-av";
+import { createAudioPlayer } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -498,8 +498,15 @@ export async function textToSpeech(
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      const { sound } = await Audio.Sound.createAsync({ uri: fileUri });
-      await sound.playAsync();
+      const player = createAudioPlayer({ uri: fileUri });
+      player.play();
+      
+      // Clean up player when done
+      player.addListener('playbackStatusUpdate', (status) => {
+        if (status.didJustFinish) {
+          player.remove();
+        }
+      });
     };
 
     reader.readAsDataURL(audioBlob);

@@ -14,7 +14,13 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../context/TranslationContext";
-import { Audio } from "expo-av";
+import { 
+  useAudioRecorder, 
+  RecordingPresets, 
+  setAudioModeAsync, 
+  AudioModule,
+  useAudioRecorderState,
+} from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import SpeakerBubble from "../components/SpeakerBubble";
@@ -66,8 +72,10 @@ export default function ListeningScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
   const [recordingCount, setRecordingCount] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [apiCallLog, setApiCallLog] = useState<string[]>([]);
   const [lastError, setLastError] = useState<string>("");
@@ -75,7 +83,7 @@ export default function ListeningScreen() {
   const flatListRef = useRef<FlatList>(null);
   const speakerMapRef = useRef<Map<string, Speaker>>(new Map());
   const isListeningRef = useRef(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const isRecordingRef = useRef(false);
   const processingRef = useRef(false);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -142,7 +150,7 @@ export default function ListeningScreen() {
 
   const requestPermissions = async () => {
     try {
-      const { status } = await Audio.requestPermissionsAsync();
+      const { status } = await AudioModule.requestRecordingPermissionsAsync();
       console.log("Audio permission status:", status);
       if (status !== "granted") {
         Alert.alert("Permission required", "Please grant microphone access to use voice detection.");
@@ -347,52 +355,22 @@ export default function ListeningScreen() {
     }
 
     processingRef.current = true;
-    let localRecording: Audio.Recording | null = null;
 
     try {
       console.log("=== Starting new recording segment ===");
       setDebugInfo("Starting recording...");
 
       // Configure audio session for recording
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      // Create recording with proper settings
-      const recordingOptions: Audio.RecordingOptions = {
-        android: {
-          extension: ".wav",
-          outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-          audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 256000,
-        },
-        ios: {
-          extension: ".wav",
-          audioQuality: Audio.IOSAudioQuality.MAX,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 256000,
-          linearPCMBitDepth: 16,
-          linearPCMIsBigEndian: false,
-          linearPCMIsFloat: false,
-        },
-        web: {
-          mimeType: "audio/webm",
-          bitsPerSecond: 256000,
-        },
-      };
-
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        recordingOptions
-      );
-      
-      localRecording = newRecording;
-      recordingRef.current = newRecording;
-      setRecording(newRecording);
+      // Prepare and start recording
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      isRecordingRef.current = true;
+      setIsRecording(true);
       setRecordingCount((prev) => prev + 1);
       
       console.log("Recording started successfully");
@@ -405,8 +383,10 @@ export default function ListeningScreen() {
       if (!isListeningRef.current) {
         console.log("Stopped listening, aborting");
         try {
-          await localRecording.stopAndUnloadAsync();
+          await audioRecorder.stop();
         } catch (e) {}
+        isRecordingRef.current = false;
+        setIsRecording(false);
         processingRef.current = false;
         return;
       }
@@ -416,10 +396,10 @@ export default function ListeningScreen() {
       setIsProcessing(true);
 
       // Stop recording and get URI
-      await localRecording.stopAndUnloadAsync();
-      const uri = localRecording.getURI();
-      recordingRef.current = null;
-      setRecording(null);
+      await audioRecorder.stop();
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      const uri = audioRecorder.uri;
       
       console.log("Recording URI:", uri);
 
@@ -505,13 +485,13 @@ export default function ListeningScreen() {
       processingRef.current = false;
 
       // Try to clean up
-      if (localRecording) {
+      if (isRecordingRef.current) {
         try {
-          await localRecording.stopAndUnloadAsync();
+          await audioRecorder.stop();
         } catch (e) {}
       }
-      recordingRef.current = null;
-      setRecording(null);
+      isRecordingRef.current = false;
+      setIsRecording(false);
 
       // Retry if still listening
       if (isListeningRef.current) {
@@ -556,11 +536,10 @@ export default function ListeningScreen() {
     setIsListening(false);
     isListeningRef.current = false;
 
-    const currentRecording = recordingRef.current;
-    if (currentRecording) {
+    if (isRecordingRef.current) {
       try {
-        await currentRecording.stopAndUnloadAsync();
-        const uri = currentRecording.getURI();
+        await audioRecorder.stop();
+        const uri = audioRecorder.uri;
         if (uri) {
           try {
             const file = new File(uri);
@@ -572,8 +551,8 @@ export default function ListeningScreen() {
       } catch (err) {
         console.error("Failed to stop recording:", err);
       }
-      recordingRef.current = null;
-      setRecording(null);
+      isRecordingRef.current = false;
+      setIsRecording(false);
     }
 
     setSpeakers((prev) => prev.map((s) => ({ ...s, isSpeaking: false })));

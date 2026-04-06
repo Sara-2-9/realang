@@ -12,15 +12,54 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../../context/TranslationContext";
 import LanguageSelector from "../../components/LanguageSelector";
+import { apple } from "@react-native-ai/apple";
+// import { generateText } from "ai";
+import { experimental_generateSpeech as speech } from "ai";
+import { AppleSpeech } from "@react-native-ai/apple";
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { userLanguage, setUserLanguage, targetLanguage, setTargetLanguage } = useTranslation();
+  const { userLanguage, setUserLanguage, targetLanguage, setTargetLanguage } =
+    useTranslation();
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
-  const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useState(false);
+  const [showTargetLanguageSelector, setShowTargetLanguageSelector] =
+    useState(false);
 
-  const handleStartListening = () => {
-    router.push("/listening");
+  const handleStartListening = async () => {
+    // router.push("/listening");
+
+    /* ---------------- generateText ------------------
+    const result = await generateText({
+      model: apple(),
+      prompt: "Translate from english to italin this words: Hello! My name is Sara",
+    }); */
+    /* console.log('---------APPLE', result) */
+
+    /* ---------------- generateSpeech ------------------ */
+    const voices = await AppleSpeech.getVoices();
+    /* console.log(
+      "---------VOICES",
+      voices.find(
+        (item) =>
+          item.identifier == "com.apple.voice.super-compact.en-US.Samantha",
+      ),
+    ); */
+    /* console.log(
+      "---------isNoveltyVoice",
+      voices.filter((item) => item.isNoveltyVoice),
+    ); */
+
+    const response = await speech({
+      model: apple.speechModel(),
+      text: "Hello from Apple!",
+      language: 'en-US',
+      // voice: "com.apple.speech.synthesis.voice.Albert",
+    });
+
+    // Access the buffer in a preferred way
+    console.log(response.audio.uint8Array)
+    // console.log(response.audio.base64)
+    // console.log('---------APPLE', response);
   };
 
   return (
@@ -28,7 +67,7 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Image
-            source={{ uri: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=100&h=100&fit=crop" }}
+            source={require('../../assets/logo-reaLang.png')}
             style={styles.logo}
           />
           <Text style={styles.title}>reaLang</Text>
@@ -60,11 +99,16 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.actionSection}>
-          <TouchableOpacity style={styles.startButton} onPress={handleStartListening}>
+          <TouchableOpacity
+            style={styles.startButton}
+            onPress={handleStartListening}
+          >
             <View style={styles.startButtonInner}>
               <Ionicons name="ear" size={40} color="#fff" />
               <Text style={styles.startButtonText}>Start Listening</Text>
-              <Text style={styles.startButtonSubtext}>Detect and translate conversations</Text>
+              <Text style={styles.startButtonSubtext}>
+                Detect and translate conversations
+              </Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -77,7 +121,9 @@ export default function HomeScreen() {
             </View>
             <View style={styles.featureContent}>
               <Text style={styles.featureTitle}>Listen to surroundings</Text>
-              <Text style={styles.featureText}>App detects voices and identifies different speakers</Text>
+              <Text style={styles.featureText}>
+                App detects voices and identifies different speakers
+              </Text>
             </View>
           </View>
           <View style={styles.featureItem}>
@@ -86,7 +132,9 @@ export default function HomeScreen() {
             </View>
             <View style={styles.featureContent}>
               <Text style={styles.featureTitle}>Auto-detect languages</Text>
-              <Text style={styles.featureText}>Each speaker's language is automatically identified</Text>
+              <Text style={styles.featureText}>
+                Each speaker's language is automatically identified
+              </Text>
             </View>
           </View>
           <View style={styles.featureItem}>
@@ -95,7 +143,9 @@ export default function HomeScreen() {
             </View>
             <View style={styles.featureContent}>
               <Text style={styles.featureTitle}>Real-time translation</Text>
-              <Text style={styles.featureText}>Conversations translated to your language instantly</Text>
+              <Text style={styles.featureText}>
+                Conversations translated to your language instantly
+              </Text>
             </View>
           </View>
         </View>

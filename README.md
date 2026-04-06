@@ -51,8 +51,8 @@ This app is built with modern technologies for a smooth mobile experience:
 
 2. **Clone the repository:**
    ```sh
-   git clone https://github.com/yourusername/michelangelo-1983.git
-   cd michelangelo-1983
+   git clone https://github.com/yourusername/realang.git
+   cd realang
    ```
 
 3. **Install dependencies:**
