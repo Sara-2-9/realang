@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   StyleSheet,
   Text,
@@ -8,14 +8,55 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  ActivityIndicator,
+  Alert,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../../context/TranslationContext";
 import LanguageSelector from "../../components/LanguageSelector";
-import { apple } from "@react-native-ai/apple";
-// import { generateText } from "ai";
-import { experimental_generateSpeech as speech } from "ai";
-import { AppleSpeech } from "@react-native-ai/apple";
+import { apple, AppleTranscription } from "@react-native-ai/apple";
+import { experimental_transcribe } from "ai";
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  setAudioModeAsync,
+  AudioModule,
+} from "expo-audio";
+import { File } from "expo-file-system";
+
+// Map full language names to ISO 639-1 codes for Apple SpeechAnalyzer
+const LANGUAGE_CODE_MAP: Record<string, string> = {
+  "English": "en",
+  "Spanish": "es",
+  "French": "fr",
+  "German": "de",
+  "Italian": "it",
+  "Portuguese": "pt",
+  "Polish": "pl",
+  "Russian": "ru",
+  "Japanese": "ja",
+  "Korean": "ko",
+  "Chinese": "zh",
+  "Arabic": "ar",
+  "Hindi": "hi",
+  "Turkish": "tr",
+  "Dutch": "nl",
+  "Swedish": "sv",
+  "Norwegian": "no",
+  "Danish": "da",
+  "Finnish": "fi",
+  "Greek": "el",
+  "Czech": "cs",
+  "Romanian": "ro",
+  "Hungarian": "hu",
+  "Ukrainian": "uk",
+  "Vietnamese": "vi",
+  "Thai": "th",
+  "Indonesian": "id",
+  "Malay": "ms",
+  "Filipino": "fil",
+};
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -24,42 +65,157 @@ export default function HomeScreen() {
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [showTargetLanguageSelector, setShowTargetLanguageSelector] =
     useState(false);
+  
+  // Transcription states
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribedText, setTranscribedText] = useState("");
+  const [transcriptionError, setTranscriptionError] = useState("");
+  
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const isRecordingRef = useRef(false);
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (isRecordingRef.current) {
+        audioRecorder.stop().catch(() => {});
+      }
+    };
+  }, []);
+
+  const requestPermissions = async () => {
+    try {
+      const { status } = await AudioModule.requestRecordingPermissionsAsync();
+      console.log("Audio permission status:", status);
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission required",
+          "Please grant microphone access to use speech recognition."
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error("Permission error:", error);
+      return false;
+    }
+  };
 
   const handleStartListening = async () => {
-    // router.push("/listening");
+    // If already recording, stop and transcribe
+    if (isRecording) {
+      await stopRecordingAndTranscribe();
+      return;
+    }
 
-    /* ---------------- generateText ------------------
-    const result = await generateText({
-      model: apple(),
-      prompt: "Translate from english to italin this words: Hello! My name is Sara",
-    }); */
-    /* console.log('---------APPLE', result) */
+    // Start new recording
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
 
-    /* ---------------- generateSpeech ------------------ */
-    const voices = await AppleSpeech.getVoices();
-    /* console.log(
-      "---------VOICES",
-      voices.find(
-        (item) =>
-          item.identifier == "com.apple.voice.super-compact.en-US.Samantha",
-      ),
-    ); */
-    /* console.log(
-      "---------isNoveltyVoice",
-      voices.filter((item) => item.isNoveltyVoice),
-    ); */
+    try {
+      console.log("=== Starting recording ===");
+      setTranscriptionError("");
+      setIsRecording(true);
+      isRecordingRef.current = true;
 
-    const response = await speech({
-      model: apple.speechModel(),
-      text: "Hello from Apple!",
-      language: 'en-US',
-      // voice: "com.apple.speech.synthesis.voice.Albert",
-    });
+      // Configure audio session
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
 
-    // Access the buffer in a preferred way
-    console.log(response.audio.uint8Array)
-    // console.log(response.audio.base64)
-    // console.log('---------APPLE', response);
+      // Prepare and start recording
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      
+      console.log("Recording started");
+    } catch (error: any) {
+      console.error("Recording error:", error);
+      setTranscriptionError(`Recording error: ${error.message}`);
+      setIsRecording(false);
+      isRecordingRef.current = false;
+    }
+  };
+
+  const stopRecordingAndTranscribe = async () => {
+    if (!isRecordingRef.current) return;
+
+    try {
+      console.log("=== Stopping recording ===");
+      setIsRecording(false);
+      isRecordingRef.current = false;
+      setIsTranscribing(true);
+
+      // Stop recording
+      await audioRecorder.stop();
+      const uri = audioRecorder.uri;
+
+      if (!uri) {
+        throw new Error("No recording URI available");
+      }
+
+      // Check file
+      const file = new File(uri);
+      console.log("File exists:", file.exists, "Size:", file.size);
+
+      if (!file.exists || file.size < 1000) {
+        throw new Error("Recording too short or file not found");
+      }
+
+      const langCode = LANGUAGE_CODE_MAP[userLanguage] || "en";
+      console.log("Language code:", langCode, "(from:", userLanguage, ")");
+
+      // Check if Apple Transcription is available for this language
+      const isAvailable = await AppleTranscription.isAvailable(langCode);
+      console.log("Apple Transcription available:", isAvailable);
+
+      if (!isAvailable) {
+        throw new Error(
+          `Language "${userLanguage}" (${langCode}) is not available for Apple Transcription. ` +
+          `Try downloading the language assets in Settings > General > Dictionary, ` +
+          `or use a different language.`
+        );
+      }
+
+      console.log("=== Using Apple Transcription (on-device) ===");
+      
+      // Read file as base64 for Apple
+      const base64Audio = await file.base64();
+      const model = apple.transcriptionModel({ language: langCode });
+      
+      // Prepare model (may download assets if needed)
+      console.log("Preparing model...");
+      await model.prepare();
+
+      console.log("Transcribing...");
+      const response = await experimental_transcribe({
+        model,
+        audio: base64Audio,
+      });
+
+      const text = response.text || "";
+      console.log("Apple Transcription result:", text);
+      
+      if (response.segments) {
+        console.log("Segments:", response.segments);
+      }
+
+      setTranscribedText(text || "No speech detected");
+
+      // Clean up file
+      try {
+        file.delete();
+      } catch (e) {
+        console.log("Failed to delete file:", e);
+      }
+
+    } catch (error: any) {
+      console.error("Transcription error:", error);
+      setTranscriptionError(error.message || String(error));
+    } finally {
+      setIsTranscribing(false);
+    }
   };
 
   return (
@@ -98,16 +254,58 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Transcription Display */}
+        {(transcribedText || isRecording || isTranscribing || transcriptionError) && (
+          <View style={styles.transcriptionContainer}>
+            <Text style={styles.transcriptionLabel}>
+              {isRecording ? "🎙️ Recording... Tap to stop" : 
+               isTranscribing ? "🔄 Transcribing..." : 
+               "📝 What you said:"}
+            </Text>
+            
+            {isRecording && (
+              <View style={styles.recordingIndicator}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>Listening...</Text>
+              </View>
+            )}
+            
+            {isTranscribing && (
+              <ActivityIndicator size="small" color="#8B7355" style={styles.loader} />
+            )}
+            
+            {transcribedText && !isRecording && !isTranscribing && (
+              <Text style={styles.transcribedText}>{transcribedText}</Text>
+            )}
+            
+            {transcriptionError && (
+              <Text style={styles.errorText}>{transcriptionError}</Text>
+            )}
+          </View>
+        )}
+
         <View style={styles.actionSection}>
           <TouchableOpacity
-            style={styles.startButton}
+            style={[
+              styles.startButton,
+              isRecording && styles.stopButton
+            ]}
             onPress={handleStartListening}
+            disabled={isTranscribing}
           >
             <View style={styles.startButtonInner}>
-              <Ionicons name="ear" size={40} color="#fff" />
-              <Text style={styles.startButtonText}>Start Listening</Text>
+              <Ionicons 
+                name={isRecording ? "stop-circle" : "ear"} 
+                size={40} 
+                color="#fff" 
+              />
+              <Text style={styles.startButtonText}>
+                {isRecording ? "Stop & Transcribe" : "Start Listening"}
+              </Text>
               <Text style={styles.startButtonSubtext}>
-                Detect and translate conversations
+                {isRecording 
+                  ? "Tap to stop and see transcription" 
+                  : "Detect and translate conversations"}
               </Text>
             </View>
           </TouchableOpacity>
@@ -234,6 +432,49 @@ const styles = StyleSheet.create({
     color: "#5C4D3C",
     marginLeft: 12,
   },
+  transcriptionContainer: {
+    backgroundColor: "#F5F0E8",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#E8DFD0",
+  },
+  transcriptionLabel: {
+    fontSize: 12,
+    color: "#A69783",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  recordingIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  recordingDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#D32F2F",
+  },
+  recordingText: {
+    fontSize: 16,
+    color: "#5C4D3C",
+    fontWeight: "500",
+  },
+  loader: {
+    marginVertical: 8,
+  },
+  transcribedText: {
+    fontSize: 16,
+    color: "#5C4D3C",
+    lineHeight: 22,
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#D32F2F",
+  },
   actionSection: {
     marginBottom: 30,
   },
@@ -246,6 +487,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 16,
     elevation: 8,
+  },
+  stopButton: {
+    backgroundColor: "#D32F2F",
+    shadowColor: "#D32F2F",
   },
   startButtonInner: {
     alignItems: "center",
