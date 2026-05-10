@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import React, { useState, useRef, useEffect } from "react";
 import {
   StyleSheet,
@@ -7,10 +6,8 @@ import {
   View,
   TouchableOpacity,
   ScrollView,
-  Image,
   ActivityIndicator,
   Alert,
-  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTranslation } from "../../context/TranslationContext";
@@ -24,42 +21,9 @@ import {
   AudioModule,
 } from "expo-audio";
 import { File } from "expo-file-system";
-
-// Map full language names to ISO 639-1 codes for Apple SpeechAnalyzer
-const LANGUAGE_CODE_MAP: Record<string, string> = {
-  "English": "en",
-  "Spanish": "es",
-  "French": "fr",
-  "German": "de",
-  "Italian": "it",
-  "Portuguese": "pt",
-  "Polish": "pl",
-  "Russian": "ru",
-  "Japanese": "ja",
-  "Korean": "ko",
-  "Chinese": "zh",
-  "Arabic": "ar",
-  "Hindi": "hi",
-  "Turkish": "tr",
-  "Dutch": "nl",
-  "Swedish": "sv",
-  "Norwegian": "no",
-  "Danish": "da",
-  "Finnish": "fi",
-  "Greek": "el",
-  "Czech": "cs",
-  "Romanian": "ro",
-  "Hungarian": "hu",
-  "Ukrainian": "uk",
-  "Vietnamese": "vi",
-  "Thai": "th",
-  "Indonesian": "id",
-  "Malay": "ms",
-  "Filipino": "fil",
-};
+import { APPLE_LANGUAGE_CODE_MAP } from "../../constants/languages";
 
 export default function HomeScreen() {
-  const router = useRouter();
   const { userLanguage, setUserLanguage, targetLanguage, setTargetLanguage } =
     useTranslation();
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
@@ -130,9 +94,9 @@ export default function HomeScreen() {
       audioRecorder.record();
       
       console.log("Recording started");
-    } catch (error: any) {
+    } catch (error) {
       console.error("Recording error:", error);
-      setTranscriptionError(`Recording error: ${error.message}`);
+      setTranscriptionError(`Recording error: ${error instanceof Error ? error.message : String(error)}`);
       setIsRecording(false);
       isRecordingRef.current = false;
     }
@@ -163,7 +127,7 @@ export default function HomeScreen() {
         throw new Error("Recording too short or file not found");
       }
 
-      const langCode = LANGUAGE_CODE_MAP[userLanguage] || "en";
+      const langCode = APPLE_LANGUAGE_CODE_MAP[userLanguage] || "en";
       console.log("Language code:", langCode, "(from:", userLanguage, ")");
 
       // Check if Apple Transcription is available for this language
@@ -210,9 +174,9 @@ export default function HomeScreen() {
         console.log("Failed to delete file:", e);
       }
 
-    } catch (error: any) {
+    } catch (error) {
       console.error("Transcription error:", error);
-      setTranscriptionError(error.message || String(error));
+      setTranscriptionError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsTranscribing(false);
     }
@@ -222,10 +186,10 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Image
+          {/* <Image
             source={require('../../assets/logo-reaLang.png')}
             style={styles.logo}
-          />
+          /> */}
           <Text style={styles.title}>reaLang</Text>
           <Text style={styles.subtitle}>Real-time AI Translation</Text>
         </View>

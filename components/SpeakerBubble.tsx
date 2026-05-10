@@ -18,10 +18,11 @@ interface SpeakerBubbleProps {
 export default function SpeakerBubble({ speaker }: SpeakerBubbleProps) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (speaker.isSpeaking) {
-      Animated.parallel([
+      animRef.current = Animated.parallel([
         Animated.loop(
           Animated.sequence([
             Animated.timing(scaleAnim, {
@@ -41,8 +42,11 @@ export default function SpeakerBubble({ speaker }: SpeakerBubbleProps) {
           duration: 200,
           useNativeDriver: true,
         }),
-      ]).start();
+      ]);
+      animRef.current.start();
     } else {
+      animRef.current?.stop();
+      animRef.current = null;
       scaleAnim.setValue(1);
       Animated.timing(opacityAnim, {
         toValue: 0,
@@ -50,6 +54,11 @@ export default function SpeakerBubble({ speaker }: SpeakerBubbleProps) {
         useNativeDriver: true,
       }).start();
     }
+
+    return () => {
+      animRef.current?.stop();
+      animRef.current = null;
+    };
   }, [speaker.isSpeaking]);
 
   return (

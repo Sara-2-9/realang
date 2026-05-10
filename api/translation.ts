@@ -2,144 +2,16 @@
 // Free tier: ~1000 requests/day via Inference API
 // Docs: https://huggingface.co/docs/api-inference/index
 
+import {
+  HELSINKI_MODEL_MAP,
+  HELSINKI_LANGUAGE_CODE_MAP,
+} from "../constants/languages";
+
 const HF_API_BASE_URL = "https://api-inference.huggingface.co/models/Helsinki-NLP";
 const HF_TOKEN = process.env.EXPO_PUBLIC_HF_TOKEN;
 
 // Wait time for model cold start (ms)
 const MODEL_LOADING_RETRY_DELAY = 10000;
-
-// Helsinki-NLP model mapping for supported language pairs
-// Format: "Source-Target": "opus-mt-src-tgt"
-// Note: Helsinki uses 2-letter ISO codes
-const HELSINKI_MODEL_MAP: Record<string, string> = {
-  // English pairs
-  "English-Italian": "opus-mt-en-it",
-  "English-Spanish": "opus-mt-en-es",
-  "English-French": "opus-mt-en-fr",
-  "English-German": "opus-mt-en-de",
-  "English-Portuguese": "opus-mt-en-pt",
-  "English-Russian": "opus-mt-en-ru",
-  "English-Chinese": "opus-mt-en-zh",
-  "English-Japanese": "opus-mt-en-jap",
-  "English-Arabic": "opus-mt-en-ar",
-  "English-Dutch": "opus-mt-en-nl",
-  "English-Polish": "opus-mt-en-pl",
-  "English-Turkish": "opus-mt-en-tr",
-  "English-Swedish": "opus-mt-en-sv",
-  "English-Norwegian": "opus-mt-en-no",
-  "English-Danish": "opus-mt-en-da",
-  "English-Finnish": "opus-mt-en-fi",
-  "English-Greek": "opus-mt-en-el",
-  "English-Czech": "opus-mt-en-cs",
-  "English-Romanian": "opus-mt-en-ro",
-  "English-Hungarian": "opus-mt-en-hu",
-  "English-Ukrainian": "opus-mt-en-uk",
-  "English-Vietnamese": "opus-mt-en-vi",
-  "English-Thai": "opus-mt-en-th",
-  "English-Indonesian": "opus-mt-en-id",
-  "English-Korean": "opus-mt-en-ko",
-  "English-Hindi": "opus-mt-en-hi",
-  
-  // Italian pairs
-  "Italian-English": "opus-mt-it-en",
-  "Italian-Spanish": "opus-mt-it-es",
-  "Italian-French": "opus-mt-it-fr",
-  "Italian-German": "opus-mt-it-de",
-  
-  // Spanish pairs
-  "Spanish-English": "opus-mt-es-en",
-  "Spanish-Italian": "opus-mt-es-it",
-  "Spanish-French": "opus-mt-es-fr",
-  "Spanish-German": "opus-mt-es-de",
-  "Spanish-Portuguese": "opus-mt-es-pt",
-  
-  // French pairs
-  "French-English": "opus-mt-fr-en",
-  "French-Italian": "opus-mt-fr-it",
-  "French-Spanish": "opus-mt-fr-es",
-  "French-German": "opus-mt-fr-de",
-  
-  // German pairs
-  "German-English": "opus-mt-de-en",
-  "German-Italian": "opus-mt-de-it",
-  "German-Spanish": "opus-mt-de-es",
-  "German-French": "opus-mt-de-fr",
-  
-  // Portuguese pairs
-  "Portuguese-English": "opus-mt-pt-en",
-  "Portuguese-Spanish": "opus-mt-pt-es",
-  
-  // Russian pairs
-  "Russian-English": "opus-mt-ru-en",
-  
-  // Chinese pairs
-  "Chinese-English": "opus-mt-zh-en",
-  
-  // Japanese pairs
-  "Japanese-English": "opus-mt-jap-en",
-  
-  // Dutch pairs
-  "Dutch-English": "opus-mt-nl-en",
-  "Dutch-German": "opus-mt-nl-de",
-  
-  // Polish pairs
-  "Polish-English": "opus-mt-pl-en",
-  
-  // Turkish pairs
-  "Turkish-English": "opus-mt-tr-en",
-  
-  // Arabic pairs
-  "Arabic-English": "opus-mt-ar-en",
-  
-  // Other common pairs
-  "Swedish-English": "opus-mt-sv-en",
-  "Norwegian-English": "opus-mt-no-en",
-  "Danish-English": "opus-mt-da-en",
-  "Finnish-English": "opus-mt-fi-en",
-  "Greek-English": "opus-mt-el-en",
-  "Czech-English": "opus-mt-cs-en",
-  "Romanian-English": "opus-mt-ro-en",
-  "Hungarian-English": "opus-mt-hu-en",
-  "Ukrainian-English": "opus-mt-uk-en",
-  "Vietnamese-English": "opus-mt-vi-en",
-  "Thai-English": "opus-mt-th-en",
-  "Indonesian-English": "opus-mt-id-en",
-  "Korean-English": "opus-mt-ko-en",
-  "Hindi-English": "opus-mt-hi-en",
-};
-
-// 2-letter language codes for Helsinki models
-const LANGUAGE_CODE_MAP: Record<string, string> = {
-  "English": "en",
-  "Italian": "it",
-  "Spanish": "es",
-  "French": "fr",
-  "German": "de",
-  "Portuguese": "pt",
-  "Russian": "ru",
-  "Chinese": "zh",
-  "Japanese": "jap",
-  "Arabic": "ar",
-  "Dutch": "nl",
-  "Polish": "pl",
-  "Turkish": "tr",
-  "Swedish": "sv",
-  "Norwegian": "no",
-  "Danish": "da",
-  "Finnish": "fi",
-  "Greek": "el",
-  "Czech": "cs",
-  "Romanian": "ro",
-  "Hungarian": "hu",
-  "Ukrainian": "uk",
-  "Vietnamese": "vi",
-  "Thai": "th",
-  "Indonesian": "id",
-  "Korean": "ko",
-  "Hindi": "hi",
-  "Malay": "ms",
-  "Filipino": "tl",
-};
 
 export interface TranslationRequest {
   inputs: string;
@@ -362,5 +234,5 @@ export function getSupportedLanguages(): string[] {
  * @returns boolean
  */
 export function isLanguageSupported(language: string): boolean {
-  return language in LANGUAGE_CODE_MAP;
+  return language in HELSINKI_LANGUAGE_CODE_MAP;
 }

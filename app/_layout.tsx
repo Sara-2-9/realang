@@ -1,5 +1,5 @@
-import { Stack } from "expo-router";
-import React from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
+import React, { useEffect } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar, ActivityIndicator, View } from "react-native";
 import { TranslationProvider, useTranslation } from "../context/TranslationContext";
@@ -8,6 +8,20 @@ import { AuthProvider, useAuth } from "../context/AuthContext";
 function RootLayoutContent() {
   const { isLoading: translationLoading } = useTranslation();
   const { isLoading: authLoading, isAuthenticated } = useAuth();
+  const router = useRouter();
+  const segments = useSegments();
+
+  useEffect(() => {
+    if (authLoading || translationLoading) return;
+
+    const inAuthGroup = segments[0] === "(tabs)" || segments[0] === "listening";
+
+    if (!isAuthenticated && inAuthGroup) {
+      router.replace("/login");
+    } else if (isAuthenticated && (segments[0] === "login" || segments[0] === "register")) {
+      router.replace("/(tabs)");
+    }
+  }, [isAuthenticated, authLoading, translationLoading, segments, router]);
 
   if (translationLoading || authLoading) {
     return (
@@ -24,24 +38,20 @@ function RootLayoutContent() {
         <Stack.Screen
           name="login"
           options={{ headerShown: false }}
-          redirect={isAuthenticated}
         />
         <Stack.Screen
           name="register"
           options={{ headerShown: false }}
-          redirect={isAuthenticated}
         />
         <Stack.Screen
           name="(tabs)"
           options={{ headerShown: false, title: "reaLang" }}
-          redirect={!isAuthenticated}
         />
         <Stack.Screen
           name="listening"
           options={{
             headerShown: false
           }}
-          redirect={!isAuthenticated}
         />
       </Stack>
     </>

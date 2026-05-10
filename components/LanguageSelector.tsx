@@ -9,38 +9,7 @@ import {
   FlatList,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const LANGUAGES = [
-  "English",
-  "Spanish",
-  "French",
-  "German",
-  "Italian",
-  "Portuguese",
-  "Polish",
-  "Russian",
-  "Japanese",
-  "Korean",
-  "Chinese",
-  "Arabic",
-  "Hindi",
-  "Turkish",
-  "Dutch",
-  "Swedish",
-  "Norwegian",
-  "Danish",
-  "Finnish",
-  "Greek",
-  "Czech",
-  "Romanian",
-  "Hungarian",
-  "Ukrainian",
-  "Vietnamese",
-  "Thai",
-  "Indonesian",
-  "Malay",
-  "Filipino",
-];
+import { LANGUAGES } from "../constants/languages";
 
 interface LanguageSelectorProps {
   visible: boolean;
@@ -57,7 +26,7 @@ export default function LanguageSelector({
   selectedLanguage,
   title = "Select Language",
 }: LanguageSelectorProps) {
-  const renderLanguage = ({ item }: any) => (
+  const renderLanguage = ({ item }: { item: string }) => (
     <TouchableOpacity
       style={[
         styles.languageItem,

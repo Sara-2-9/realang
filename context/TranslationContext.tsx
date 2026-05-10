@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const STORAGE_KEYS = {
@@ -86,18 +86,21 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const value = useMemo(
+    () => ({
+      userLanguage,
+      setUserLanguage,
+      targetLanguage,
+      setTargetLanguage,
+      apiKey,
+      setApiKey,
+      isLoading,
+    }),
+    [userLanguage, targetLanguage, apiKey, isLoading]
+  );
+
   return (
-    <TranslationContext.Provider
-      value={{
-        userLanguage,
-        setUserLanguage,
-        targetLanguage,
-        setTargetLanguage,
-        apiKey,
-        setApiKey,
-        isLoading,
-      }}
-    >
+    <TranslationContext.Provider value={value}>
       {children}
     </TranslationContext.Provider>
   );

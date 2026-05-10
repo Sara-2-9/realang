@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo, ReactNode } from "react";
 import { supabase, Profile } from "../lib/supabase";
-import { Session, User as SupabaseUser } from "@supabase/supabase-js";
+import { User as SupabaseUser } from "@supabase/supabase-js";
 
 interface User {
   id: string;
@@ -33,12 +33,16 @@ function formatUser(supabaseUser: SupabaseUser, profile?: Profile | null): User 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [session, setSession] = useState<Session | null>(null);
+  const fetchProfileId = useRef(0);
 
   useEffect(() => {
     // Check for existing session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error("Session error:", error);
+        setIsLoading(false);
+        return;
+      }
       if (session?.user) {
         fetchProfile(session.user);
       } else {
@@ -49,7 +53,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        setSession(session);
         if (session?.user) {
           await fetchProfile(session.user);
         } else {
@@ -63,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function fetchProfile(supabaseUser: SupabaseUser) {
+    const currentId = ++fetchProfileId.current;
     try {
       const { data: profile, error } = await supabase
         .from("profiles")
@@ -75,12 +79,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error("Error fetching profile:", error);
       }
 
-      setUser(formatUser(supabaseUser, profile));
+      if (currentId === fetchProfileId.current) {
+        setUser(formatUser(supabaseUser, profile));
+      }
     } catch (error) {
       console.error("Error in fetchProfile:", error);
-      setUser(formatUser(supabaseUser));
+      if (currentId === fetchProfileId.current) {
+        setUser(formatUser(supabaseUser));
+      }
     } finally {
-      setIsLoading(false);
+      if (currentId === fetchProfileId.current) {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -155,17 +165,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const value = useMemo(
+    () => ({
+      user,
+      isAuthenticated: !!user,
+      isLoading,
+      login,
+      register,
+      logout,
+    }),
+    [user, isLoading]
+  );
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated: !!user,
-        isLoading,
-        login,
-        register,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

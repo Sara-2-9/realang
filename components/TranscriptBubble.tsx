@@ -33,7 +33,6 @@ export default function TranscriptBubble({
 
   const bubbleColor = speakerColor || (isOwnMessage ? "#9BB068" : "#F5F0E8");
   const isLightBubble = !isOwnMessage && !speakerColor;
-  const showTranslation = message.originalLanguage !== "English" || message.originalText !== message.translatedText;
   const isAlreadySameLanguage = message.originalLanguage === targetLanguage;
 
   return (
