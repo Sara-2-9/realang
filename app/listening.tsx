@@ -21,7 +21,7 @@ import { useAudioRecorderLoop, Message } from "../hooks/useAudioRecorder";
 
 export default function ListeningScreen() {
   const router = useRouter();
-  const { targetLanguage, apiKey } = useTranslation();
+  const { userLanguage, targetLanguage, enableSpeechOutput } = useTranslation();
 
   const {
     isListening,
@@ -35,7 +35,7 @@ export default function ListeningScreen() {
     translationError,
     startListening,
     stopListening,
-  } = useAudioRecorderLoop(apiKey, targetLanguage);
+  } = useAudioRecorderLoop(userLanguage, targetLanguage, enableSpeechOutput);
 
   const flatListRef = useRef<FlatList>(null);
   const isAtBottomRef = useRef(true);
@@ -170,7 +170,7 @@ export default function ListeningScreen() {
         </View>
         <View style={styles.languageBadge}>
           <Text style={styles.languageBadgeText}>
-            → {targetLanguage.substring(0, 3).toUpperCase()}
+            → {userLanguage.substring(0, 3).toUpperCase()}
           </Text>
         </View>
       </View>
@@ -225,7 +225,7 @@ export default function ListeningScreen() {
           <View style={styles.translationNote}>
             <Ionicons name="language" size={14} color="#9BB068" />
             <Text style={styles.translationNoteText}>
-              Translated to {targetLanguage}
+              Translated to {userLanguage}
             </Text>
           </View>
         </View>
@@ -239,7 +239,7 @@ export default function ListeningScreen() {
             </Text>
             {isListening && (
               <Text style={styles.emptyStateHint}>
-                All speech will be translated to {targetLanguage}
+                All speech will be translated to {userLanguage}
               </Text>
             )}
           </View>

@@ -1,10 +1,17 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  ReactNode,
+} from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const STORAGE_KEYS = {
   USER_LANGUAGE: "realang_user_language",
   TARGET_LANGUAGE: "realang_target_language",
-  API_KEY: "realang_api_key",
+  ENABLE_SPEECH_OUTPUT: "realang_enable_speech_output",
 };
 
 interface TranslationContextType {
@@ -12,8 +19,8 @@ interface TranslationContextType {
   setUserLanguage: (language: string) => void;
   targetLanguage: string;
   setTargetLanguage: (language: string) => void;
-  apiKey: string;
-  setApiKey: (key: string) => void;
+  enableSpeechOutput: boolean;
+  setEnableSpeechOutput: (enabled: boolean) => void;
   isLoading: boolean;
 }
 
@@ -24,7 +31,7 @@ const TranslationContext = createContext<TranslationContextType | undefined>(
 export function TranslationProvider({ children }: { children: ReactNode }) {
   const [userLanguage, setUserLanguageState] = useState("English");
   const [targetLanguage, setTargetLanguageState] = useState("English");
-  const [apiKey, setApiKeyState] = useState("");
+  const [enableSpeechOutput, setEnableSpeechOutputState] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -33,11 +40,12 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
 
   const loadStoredData = async () => {
     try {
-      const [storedLanguage, storedTargetLanguage, storedApiKey] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.USER_LANGUAGE),
-        AsyncStorage.getItem(STORAGE_KEYS.TARGET_LANGUAGE),
-        AsyncStorage.getItem(STORAGE_KEYS.API_KEY),
-      ]);
+      const [storedLanguage, storedTargetLanguage, storedSpeech] =
+        await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEYS.USER_LANGUAGE),
+          AsyncStorage.getItem(STORAGE_KEYS.TARGET_LANGUAGE),
+          AsyncStorage.getItem(STORAGE_KEYS.ENABLE_SPEECH_OUTPUT),
+        ]);
 
       if (storedLanguage) {
         setUserLanguageState(storedLanguage);
@@ -45,12 +53,8 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       if (storedTargetLanguage) {
         setTargetLanguageState(storedTargetLanguage);
       }
-      // Use stored API key or fallback to environment variable
-      const defaultApiKey = process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY || "";
-      if (storedApiKey) {
-        setApiKeyState(storedApiKey);
-      } else if (defaultApiKey) {
-        setApiKeyState(defaultApiKey);
+      if (storedSpeech === "true") {
+        setEnableSpeechOutputState(true);
       }
     } catch (error) {
       console.error("Error loading stored data:", error);
@@ -77,12 +81,15 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const setApiKey = async (key: string) => {
+  const setEnableSpeechOutput = async (enabled: boolean) => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.API_KEY, key);
-      setApiKeyState(key);
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.ENABLE_SPEECH_OUTPUT,
+        String(enabled)
+      );
+      setEnableSpeechOutputState(enabled);
     } catch (error) {
-      console.error("Error saving API key:", error);
+      console.error("Error saving speech output setting:", error);
     }
   };
 
@@ -92,11 +99,11 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
       setUserLanguage,
       targetLanguage,
       setTargetLanguage,
-      apiKey,
-      setApiKey,
+      enableSpeechOutput,
+      setEnableSpeechOutput,
       isLoading,
     }),
-    [userLanguage, targetLanguage, apiKey, isLoading]
+    [userLanguage, targetLanguage, enableSpeechOutput, isLoading]
   );
 
   return (
@@ -109,7 +116,9 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
 export function useTranslation() {
   const context = useContext(TranslationContext);
   if (context === undefined) {
-    throw new Error("useTranslation must be used within a TranslationProvider");
+    throw new Error(
+      "useTranslation must be used within a TranslationProvider"
+    );
   }
   return context;
 }

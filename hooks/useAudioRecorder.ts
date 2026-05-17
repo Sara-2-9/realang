@@ -7,8 +7,17 @@ import {
   AudioModule,
 } from "expo-audio";
 import { File } from "expo-file-system";
-import { transcribeAudio, TranscriptionResult } from "../api/elevenlabs";
-import { translateTextWithNLLB } from "../api/translation";
+import {
+  transcribeAudio,
+  translateText,
+  synthesizeSpeech,
+  embedText,
+} from "../api/apple";
+import {
+  getCachedTranslation,
+  saveTranslation,
+} from "../lib/translationCache";
+import { APPLE_LANGUAGE_CODE_MAP } from "../constants/languages";
 
 export interface Speaker {
   id: string;
@@ -44,7 +53,11 @@ const SPEAKER_COLORS = [
 
 const RECORDING_DURATION_MS = 6000;
 
-export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
+export function useAudioRecorderLoop(
+  userLanguage: string,
+  targetLanguage: string,
+  enableSpeechOutput: boolean
+) {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -135,26 +148,48 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
     []
   );
 
-  const logApiCall = useCallback((api: string, endpoint: string, status: string) => {
-    if (!isMountedRef.current) return;
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `[${timestamp}] ${api}: ${endpoint} - ${status}`;
-    setApiCallLog((prev) => [...prev.slice(-9), logEntry]);
-  }, []);
+  const logApiCall = useCallback(
+    (api: string, endpoint: string, status: string) => {
+      if (!isMountedRef.current) return;
+      const timestamp = new Date().toLocaleTimeString();
+      const logEntry = `[${timestamp}] ${api}: ${endpoint} - ${status}`;
+      setApiCallLog((prev) => [...prev.slice(-9), logEntry]);
+    },
+    []
+  );
 
   const translateMessage = useCallback(
-    async (messageId: string, originalText: string, sourceLanguage: string) => {
+    async (messageId: string, originalText: string) => {
       const currentId = ++fetchProfileId.current;
       try {
-        const textToTranslate = originalText.trim();
         if (!isMountedRef.current) return;
         setTranslationError("");
 
-        const translatedText = await translateTextWithNLLB(
-          textToTranslate,
-          sourceLanguage,
-          targetLanguage
-        );
+        // 1. Embed the original text
+        const embedding = await embedText(originalText);
+
+        if (currentId !== fetchProfileId.current) return;
+
+        // 2. Check embedding cache
+        let translatedText = await getCachedTranslation(embedding, userLanguage);
+
+        // 3. Cache miss → LLM translation
+        if (!translatedText) {
+          translatedText = await translateText(
+            originalText,
+            targetLanguage,
+            userLanguage
+          );
+          if (translatedText && isMountedRef.current) {
+            await saveTranslation(
+              originalText,
+              translatedText,
+              embedding,
+              targetLanguage,
+              userLanguage
+            );
+          }
+        }
 
         if (currentId !== fetchProfileId.current) return;
 
@@ -166,16 +201,26 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
                 : msg
             )
           );
-          logApiCall("NLLB-200", "/translate", "Success");
+          logApiCall("Apple LLM", "/translate", "Success");
+
+          if (enableSpeechOutput) {
+            const langCode = APPLE_LANGUAGE_CODE_MAP[userLanguage];
+            synthesizeSpeech(translatedText, langCode).catch(() => {});
+          }
         } else {
           throw new Error("Translation returned null");
         }
       } catch (error) {
         if (currentId !== fetchProfileId.current) return;
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg =
+          error instanceof Error ? error.message : String(error);
         if (isMountedRef.current) {
           setTranslationError(`Translation failed: ${errorMsg}`);
-          logApiCall("NLLB-200", "/translate", `Error: ${errorMsg.substring(0, 50)}`);
+          logApiCall(
+            "Apple LLM",
+            "/translate",
+            `Error: ${errorMsg.substring(0, 50)}`
+          );
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === messageId
@@ -190,74 +235,67 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
         }
       }
     },
-    [targetLanguage, logApiCall]
+    [userLanguage, targetLanguage, enableSpeechOutput, logApiCall]
   );
 
   const processTranscriptionResult = useCallback(
-    async (result: TranscriptionResult) => {
-      if (!result.text || result.text.trim() === "") return;
+    async (text: string) => {
+      if (!text || text.trim() === "") return;
 
-      const detectedLanguage = result.detected_language || "Unknown";
-      const fullTranscribedText = result.text.trim();
-      const needsTranslation = detectedLanguage !== targetLanguage;
+      const sourceLanguage = targetLanguage;
+      const needsTranslation = sourceLanguage !== userLanguage;
 
       if (isMountedRef.current) {
         setDebugInfo(
-          `Detected: ${detectedLanguage}\nFull text: ${fullTranscribedText.substring(0, 100)}...`
+          `Source: ${sourceLanguage}\nText: ${text.substring(0, 100)}...`
         );
       }
 
-      const processUtterance = async (text: string, speakerId: string) => {
-        const speaker = getOrCreateSpeaker(speakerId, detectedLanguage);
-        speaker.isSpeaking = true;
-        speaker.lastActive = new Date();
+      const speaker = getOrCreateSpeaker("speaker_0", sourceLanguage);
+      speaker.isSpeaking = true;
+      speaker.lastActive = new Date();
+      if (isMountedRef.current) {
+        setSpeakers(Array.from(speakerMapRef.current.values()));
+      }
+
+      const messageId = Date.now().toString() + Math.random();
+      const newMessage: Message = {
+        id: messageId,
+        participantId: speaker.id,
+        participantName: speaker.name,
+        originalText: text,
+        translatedText: needsTranslation
+          ? `Translating to ${userLanguage}...`
+          : text,
+        originalLanguage: sourceLanguage,
+        timestamp: new Date(),
+        speakerColor: speaker.color,
+        isTranslating: needsTranslation,
+      };
+
+      if (isMountedRef.current) {
+        setMessages((prev) => [...prev, newMessage]);
+      }
+
+      if (needsTranslation) {
+        logApiCall("Apple LLM", "/translate", "Calling...");
+        translateMessage(messageId, text);
+      }
+
+      timeoutRef.current = setTimeout(() => {
+        speaker.isSpeaking = false;
         if (isMountedRef.current) {
           setSpeakers(Array.from(speakerMapRef.current.values()));
         }
-
-        const messageId = Date.now().toString() + speakerId + Math.random();
-        const newMessage: Message = {
-          id: messageId,
-          participantId: speaker.id,
-          participantName: speaker.name,
-          originalText: text,
-          translatedText: needsTranslation
-            ? `Translating to ${targetLanguage}...`
-            : text,
-          originalLanguage: detectedLanguage,
-          timestamp: new Date(),
-          speakerColor: speaker.color,
-          isTranslating: needsTranslation,
-        };
-
-        if (isMountedRef.current) {
-          setMessages((prev) => [...prev, newMessage]);
-        }
-
-        if (needsTranslation) {
-          logApiCall("NLLB-200", "/translate", "Calling...");
-          translateMessage(messageId, text, detectedLanguage);
-        }
-
-        timeoutRef.current = setTimeout(() => {
-          speaker.isSpeaking = false;
-          if (isMountedRef.current) {
-            setSpeakers(Array.from(speakerMapRef.current.values()));
-          }
-        }, 1500);
-      };
-
-      if (result.utterances && result.utterances.length > 0) {
-        for (const utterance of result.utterances) {
-          const utteranceText = utterance.text?.trim();
-          if (!utteranceText) continue;
-          await processUtterance(utteranceText, utterance.speaker_id || "speaker_0");
-        }
-      } else {
-        await processUtterance(fullTranscribedText, "speaker_0");
-      }
+      }, 1500);
     },
-    [getOrCreateSpeaker, logApiCall, targetLanguage, translateMessage]
+    [
+      getOrCreateSpeaker,
+      logApiCall,
+      targetLanguage,
+      userLanguage,
+      translateMessage,
+    ]
   );
 
   const recordAndTranscribe = useCallback(async () => {
@@ -327,11 +365,12 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
 
       const fileSize = file.size || 0;
       if (isMountedRef.current) {
-        setDebugInfo(`Sending to API (${Math.round(fileSize / 1024)}KB)...`);
+        setDebugInfo(`Transcribing (${Math.round(fileSize / 1024)}KB)...`);
       }
 
       if (fileSize < 5000) {
-        if (isMountedRef.current) setDebugInfo("No audio detected, listening...");
+        if (isMountedRef.current)
+          setDebugInfo("No audio detected, listening...");
         try {
           file.delete();
         } catch {}
@@ -343,23 +382,26 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
         return;
       }
 
-      logApiCall("ElevenLabs", "/v1/speech-to-text", "Calling...");
-      const result = await transcribeAudio(uri, apiKey);
+      const audioBase64 = await file.base64();
+      const langCode = APPLE_LANGUAGE_CODE_MAP[targetLanguage];
+      logApiCall("Apple STT", "/transcribe", "Calling...");
+      const transcribedText = await transcribeAudio(audioBase64, langCode);
       logApiCall(
-        "ElevenLabs",
-        "/v1/speech-to-text",
-        result?.text ? "Success" : "No speech"
+        "Apple STT",
+        "/transcribe",
+        transcribedText ? "Success" : "No speech"
       );
 
       try {
         file.delete();
       } catch {}
 
-      if (result && result.text && result.text.trim()) {
+      if (transcribedText && transcribedText.trim()) {
         if (isMountedRef.current) setLastError("");
-        await processTranscriptionResult(result);
+        await processTranscriptionResult(transcribedText);
       } else {
-        if (isMountedRef.current) setDebugInfo("No speech detected, listening...");
+        if (isMountedRef.current)
+          setDebugInfo("No speech detected, listening...");
       }
 
       setIsProcessing(false);
@@ -389,18 +431,14 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
         timeoutRef.current = setTimeout(() => recordAndTranscribe(), 1000);
       }
     }
-  }, [apiKey, audioRecorder, processTranscriptionResult, logApiCall]);
+  }, [
+    audioRecorder,
+    targetLanguage,
+    processTranscriptionResult,
+    logApiCall,
+  ]);
 
   const startListening = useCallback(async () => {
-    if (!apiKey) {
-      Alert.alert(
-        "API Key Required",
-        "Please set your ElevenLabs API key in Settings to enable real voice recognition.",
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
     const hasPermission = await requestPermissions();
     if (!hasPermission) return;
 
@@ -419,7 +457,7 @@ export function useAudioRecorderLoop(apiKey: string, targetLanguage: string) {
     fetchProfileId.current = 0;
 
     recordAndTranscribe();
-  }, [apiKey, recordAndTranscribe]);
+  }, [recordAndTranscribe]);
 
   const stopListening = useCallback(async () => {
     isListeningRef.current = false;
